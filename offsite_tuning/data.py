@@ -1,4 +1,4 @@
-from datasets import load_dataset
+from datasets import load_dataset, load_from_disk
 import logging
 from itertools import chain
 from offsite_tuning.tasks import task_dict, map_dataset_name_and_config
@@ -19,8 +19,11 @@ def get_raw_datasets(args):
     if args.dataset_name is not None:
         # Downloading and loading a dataset from the hub.
         dataset_name, dataset_config_name = map_dataset_name_and_config(args)
-        raw_datasets = load_dataset(
-            dataset_name, dataset_config_name)
+        try:
+            raw_datasets = load_dataset(
+                dataset_name, dataset_config_name)
+        except Exception as e:
+            raw_datasets = load_from_disk(dataset_name)
         if "validation" not in raw_datasets.keys():
             raw_datasets["validation"] = load_dataset(
                 dataset_name,
@@ -236,3 +239,53 @@ def process_text2text_datasets(raw_datasets, args, tokenizer, accelerator):
         )
 
     return tokenized_datasets
+
+
+if __name__ == "__main__":
+    from offsite_tuning.utils import parse_args, get_args
+    from accelerate import Accelerator, DistributedType
+    from transformers import (
+        CONFIG_MAPPING,
+        MODEL_MAPPING,
+        AutoConfig,
+        AutoModel,
+        AutoModelForCausalLM,
+        AutoTokenizer,
+        SchedulerType,
+        default_data_collator,
+        DataCollatorWithPadding,
+        DataCollatorForTokenClassification,
+        get_scheduler,
+    )
+    parser = get_args()
+    parser.add_argument(
+        "--dataset_preprocess_store",
+        type=str,
+        default=None,
+        help="Location where preprocessed_datasets are stored",
+    )
+    args = parser.parse_args()
+    
+    if args.tokenizer_name:
+        tokenizer = AutoTokenizer.from_pretrained(
+            args.tokenizer_name, use_fast=not args.use_slow_tokenizer)
+    elif args.model_name_or_path:
+        tokenizer = AutoTokenizer.from_pretrained(
+            args.model_name_or_path, use_fast=not args.use_slow_tokenizer)
+    else:
+        raise ValueError(
+            "You are instantiating a new tokenizer from scratch. This is not supported by this script."
+            "You can do it from another script, save it, and load it from here, using --tokenizer_name."
+        )
+    accelerator = Accelerator()
+    raw_datasets = get_raw_datasets(args)
+    tokenized_datasets = get_tokenized_datasets(
+                raw_datasets, args, accelerator, tokenizer)
+    tokenized_datasets.save_to_disk(args.dataset_preprocess_store + "_tokenized") # /home/ahemf/processed_datasets/pile_subsampled
+    lm_datasets = get_lm_datasets(
+            tokenized_datasets, args, accelerator, tokenizer)
+    lm_datasets.save_to_disk(args.dataset_preprocess_store + "_tokenized_blocks")
+    
+    # python data.py --block_size 512 --tokenizer_name gpt2-xl --dataset_name iohadrubin/wikitext-103-raw-v1 --dataset_preprocess_store /home/ahemf/processed_datasets/wikitext
+    # python data.py --block_size 512 --tokenizer_name gpt2-xl --dataset_name /home/ahemf/processed_datasets/pile_subsampled --dataset_preprocess_store /home/ahemf/processed_datasets/pile_subsampled
+

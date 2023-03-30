@@ -131,7 +131,7 @@ def quantize(model, bits):
         param.sub_(zp).div_(scale).round_().mul_(scale).add_(zp)
 
 
-def parse_args():
+def get_args():
     parser = argparse.ArgumentParser(
         description="Finetune a transformers model on a causal language modeling task")
     parser.add_argument(
@@ -550,10 +550,13 @@ def parse_args():
         help='Size of the adapter',
     )
 
-    parser.add_argument
-    args = parser.parse_args()
+    return parser
 
+def parse_args():
+    parser = get_args()
+    args = parser.parse_args()
     return args
+    
 
 def get_layers(model):
     if isinstance(model, OPTForCausalLM):
