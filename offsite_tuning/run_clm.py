@@ -191,8 +191,11 @@ def main():
             tokenized_datasets = get_tokenized_datasets(
                 raw_datasets, args, accelerator, tokenizer)
 
-        lm_datasets = get_lm_datasets(
-            tokenized_datasets, args, accelerator, tokenizer)
+        if args.dataset_need_block_creation:
+            lm_datasets = get_lm_datasets(
+                tokenized_datasets, args, accelerator, tokenizer)
+        else:
+            lm_datasets = tokenized_datasets
 
     train_dataset = lm_datasets["train"]
     eval_dataset = lm_datasets["validation"]

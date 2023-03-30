@@ -147,6 +147,11 @@ def get_args():
         help="The configuration name of the dataset to use (via the datasets library).",
     )
     parser.add_argument(
+        "--dataset_need_block_creation",
+        action="store_true",
+        help="Whether we want the tokenized datasets to be divided into blocks or is it already done as preprocessing step.",
+    )
+    parser.add_argument(
         "--train_file", type=str, default=None, help="A csv or a json file containing the training data."
     )
     parser.add_argument(
