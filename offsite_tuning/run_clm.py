@@ -179,8 +179,10 @@ def main():
             raw_datasets, args, tokenizer, accelerator)
     else:
         if args.train_tokenized_dataset and args.val_tokenized_dataset:
+            print("LOADING datasets")
             tokenized_datasets = load_from_disk(args.train_tokenized_dataset)
             val_dataset = load_from_disk(args.val_tokenized_dataset)
+            print("LOADED datasets")
             if 'validation' in val_dataset:
                 tokenized_datasets["validation"] = val_dataset['validation']
             else:
@@ -335,8 +337,9 @@ def main():
         model.eval()
         losses = []
         for step, batch in enumerate(eval_dataloader):
-            with torch.no_grad():
-                outputs = model(**batch)
+            with torch.autocast("cuda" if torch.cuda.is_available() else "cpu"):
+                with torch.no_grad():
+                    outputs = model(**batch)
             loss = outputs.loss
             losses.append(accelerator.gather_for_metrics(
                 loss.repeat(args.per_device_eval_batch_size)).cpu())
@@ -397,7 +400,8 @@ def main():
                 continue
 
             with accelerator.accumulate(model):
-                outputs = model(**batch)
+                with torch.autocast("cuda" if torch.cuda.is_available() else "cpu"):
+                    outputs = model(**batch)
                 lm_loss = outputs.loss
                 if not args.no_teacher:
                     kd_loss = get_kd_loss(model.module)

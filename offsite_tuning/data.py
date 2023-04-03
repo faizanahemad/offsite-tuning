@@ -288,4 +288,6 @@ if __name__ == "__main__":
     
     # python data.py --block_size 512 --tokenizer_name gpt2-xl --dataset_name iohadrubin/wikitext-103-raw-v1 --dataset_preprocess_store /home/ahemf/processed_datasets/wikitext
     # python data.py --block_size 512 --tokenizer_name gpt2-xl --dataset_name /home/ahemf/processed_datasets/pile_subsampled --dataset_preprocess_store /home/ahemf/processed_datasets/pile_subsampled
+    # iohadrubin/wikitext-103-raw-v1
+    # python data.py --block_size 256 --tokenizer_name gpt2 --dataset_name wikipedia --dataset_config_name 20220301.en --dataset_preprocess_store /home/ahemf/processed_datasets/wikipedia
 
