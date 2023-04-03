@@ -148,6 +148,8 @@ def get_dataloaders(args):
     eval_dataloader = DataLoader(
         eval_dataset, collate_fn=collator, batch_size=args.per_device_eval_batch_size
     )
+    
+    logger.info(f"  Num examples = {len(train_dataset)}")
     return train_dataloader, eval_dataloader
     
     
@@ -342,7 +344,6 @@ def main():
         accelerator.num_processes * args.gradient_accumulation_steps
 
     logger.info("***** Running training *****")
-    logger.info(f"  Num examples = {len(train_dataset)}")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
     logger.info(
         f"  Instantaneous batch size per device = {args.per_device_train_batch_size}")
