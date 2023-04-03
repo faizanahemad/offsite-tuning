@@ -255,16 +255,6 @@ def main():
     if args.use_bitfit:
         use_bitfit(model.trainable_module)
 
-    if args.load_student and not args.restart_training:
-        base_results = json.load(
-            open(os.path.join(args.load_student, 'all_results.json'), 'r'))
-        starting_epoch = base_results['epoch']
-        resume_step = base_results['step'] - \
-            starting_epoch * len(train_dataloader)
-    else:
-        starting_epoch = 0
-        resume_step = -1
-
     trainable_params = sum(p.numel()
                            for p in model.parameters() if p.requires_grad)
 
@@ -278,12 +268,22 @@ def main():
     # print(tokenizer.model_max_length)
     # print_code(model.__call__)
     # print_code(model.forward)
+    train_dataloader, eval_dataloader = get_dataloaders(args)
+    if args.load_student and not args.restart_training:
+        base_results = json.load(
+            open(os.path.join(args.load_student, 'all_results.json'), 'r'))
+        starting_epoch = base_results['epoch']
+        resume_step = base_results['step'] - \
+            starting_epoch * len(train_dataloader)
+    else:
+        starting_epoch = 0
+        resume_step = -1
     
     embedding_size = model.get_input_embeddings().weight.shape[0]
     if len(tokenizer) > embedding_size:
         model.resize_token_embeddings(len(tokenizer))
 
-    train_dataloader, eval_dataloader = get_dataloaders()
+    
 
     # Optimizer
     # Split weights in two groups, one with weight decay and the other not.
