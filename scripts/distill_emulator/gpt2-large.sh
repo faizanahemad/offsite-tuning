@@ -1,6 +1,6 @@
 # l25
 MODEL="gpt2-large"
-num_student_layers=16
+num_student_layers=12
 bs=2
 pad=2
 
@@ -8,7 +8,6 @@ pad=2
 export WANDB_PROJECT="offsite_tuning"
 export WANDB_NAME="${MODEL}_emulator_${num_student_layers}_${pad}_${pad}"
 export WANDB_MODE="dryrun"
-
 CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" accelerate launch \
     --mixed_precision=fp16 --multi_gpu \
     offsite_tuning/run_clm.py \

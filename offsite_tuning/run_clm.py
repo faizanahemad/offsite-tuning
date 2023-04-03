@@ -87,7 +87,70 @@ import gc
 
 logger = get_logger(__name__)
 
+def print_code(func):
+    import inspect
+    from pygments import highlight
+    from pygments.lexers import PythonLexer
+    from pygments.formatters import TerminalFormatter
 
+    code = "".join(inspect.getsourcelines(func)[0])
+    print(highlight(code, PythonLexer(), TerminalFormatter()))
+
+    
+def get_dataloaders(args):
+    if args.dataset_name in task_dict:  # special case for e2e_nlg dataset
+        raw_datasets = get_raw_datasets(args)
+        lm_datasets = process_text2text_datasets(
+            raw_datasets, args, tokenizer, accelerator)
+    else:
+        if args.train_tokenized_dataset and args.val_tokenized_dataset:
+            print("LOADING datasets")
+            tokenized_datasets = load_from_disk(args.train_tokenized_dataset)
+            val_dataset = load_from_disk(args.val_tokenized_dataset)
+            print("LOADED datasets")
+            if 'validation' in val_dataset:
+                tokenized_datasets["validation"] = val_dataset['validation']
+            else:
+                tokenized_datasets["validation"] = val_dataset['train']
+        else:
+            raw_datasets = get_raw_datasets(args)
+
+            tokenized_datasets = get_tokenized_datasets(
+                raw_datasets, args, accelerator, tokenizer)
+
+        if args.dataset_need_block_creation:
+            lm_datasets = get_lm_datasets(
+                tokenized_datasets, args, accelerator, tokenizer)
+        else:
+            lm_datasets = tokenized_datasets
+
+    train_dataset = lm_datasets["train"]
+    eval_dataset = lm_datasets["validation"]
+
+    if args.train_num_samples is not None:
+        # check if we have enough samples for the training set
+        if args.train_num_samples > len(train_dataset):
+            args.train_num_samples = len(train_dataset)
+        train_dataset = train_dataset.select(
+            range(args.train_num_samples))
+
+    if args.validation_num_samples is not None:
+        # check if we have enough samples for the validation set
+        if args.validation_num_samples > len(eval_dataset):
+            args.validation_num_samples = len(eval_dataset)
+        eval_dataset = eval_dataset.select(
+            range(args.validation_num_samples))
+
+    collator = default_data_collator
+    train_dataloader = DataLoader(
+        train_dataset, shuffle=True, collate_fn=collator, batch_size=args.per_device_train_batch_size
+    )
+    eval_dataloader = DataLoader(
+        eval_dataset, collate_fn=collator, batch_size=args.per_device_eval_batch_size
+    )
+    return train_dataloader, eval_dataloader
+    
+    
 def main():
     args = parse_args()
 
@@ -169,61 +232,7 @@ def main():
 
     # We resize the embeddings only when necessary to avoid index errors. If you are creating a model from scratch
     # on a small vocab and want a smaller embedding size, remove this test.
-    embedding_size = model.get_input_embeddings().weight.shape[0]
-    if len(tokenizer) > embedding_size:
-        model.resize_token_embeddings(len(tokenizer))
-
-    if args.dataset_name in task_dict:  # special case for e2e_nlg dataset
-        raw_datasets = get_raw_datasets(args)
-        lm_datasets = process_text2text_datasets(
-            raw_datasets, args, tokenizer, accelerator)
-    else:
-        if args.train_tokenized_dataset and args.val_tokenized_dataset:
-            print("LOADING datasets")
-            tokenized_datasets = load_from_disk(args.train_tokenized_dataset)
-            val_dataset = load_from_disk(args.val_tokenized_dataset)
-            print("LOADED datasets")
-            if 'validation' in val_dataset:
-                tokenized_datasets["validation"] = val_dataset['validation']
-            else:
-                tokenized_datasets["validation"] = val_dataset['train']
-        else:
-            raw_datasets = get_raw_datasets(args)
-
-            tokenized_datasets = get_tokenized_datasets(
-                raw_datasets, args, accelerator, tokenizer)
-
-        if args.dataset_need_block_creation:
-            lm_datasets = get_lm_datasets(
-                tokenized_datasets, args, accelerator, tokenizer)
-        else:
-            lm_datasets = tokenized_datasets
-
-    train_dataset = lm_datasets["train"]
-    eval_dataset = lm_datasets["validation"]
-
-    if args.train_num_samples is not None:
-        # check if we have enough samples for the training set
-        if args.train_num_samples > len(train_dataset):
-            args.train_num_samples = len(train_dataset)
-        train_dataset = train_dataset.select(
-            range(args.train_num_samples))
-
-    if args.validation_num_samples is not None:
-        # check if we have enough samples for the validation set
-        if args.validation_num_samples > len(eval_dataset):
-            args.validation_num_samples = len(eval_dataset)
-        eval_dataset = eval_dataset.select(
-            range(args.validation_num_samples))
-
-    collator = default_data_collator
-    train_dataloader = DataLoader(
-        train_dataset, shuffle=True, collate_fn=collator, batch_size=args.per_device_train_batch_size
-    )
-    eval_dataloader = DataLoader(
-        eval_dataset, collate_fn=collator, batch_size=args.per_device_eval_batch_size
-    )
-
+    # print(model)
     model = setup_teacher_student(model, args, accelerator)
 
     if args.no_teacher:
@@ -265,6 +274,16 @@ def main():
         if param.requires_grad:
             logger.info(
                 f"Trainable parameter: {name} with shape {param.shape} and dtype {param.dtype}")
+    # print(model)
+    # print(tokenizer.model_max_length)
+    # print_code(model.__call__)
+    # print_code(model.forward)
+    
+    embedding_size = model.get_input_embeddings().weight.shape[0]
+    if len(tokenizer) > embedding_size:
+        model.resize_token_embeddings(len(tokenizer))
+
+    train_dataloader, eval_dataloader = get_dataloaders()
 
     # Optimizer
     # Split weights in two groups, one with weight decay and the other not.
