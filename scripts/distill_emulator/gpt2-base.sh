@@ -1,7 +1,7 @@
 # l25
 MODEL="gpt2"
 num_student_layers=4
-bs=2
+bs=12
 pad=2
 
 
@@ -17,8 +17,8 @@ CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" accelerate launch \
     --preprocessing_num_workers 88 \
     --per_device_train_batch_size $bs \
     --per_device_eval_batch_size $bs \
-    --gradient_accumulation_steps 4 \
-    --learning_rate 2e-5 \
+    --gradient_accumulation_steps 1 \
+    --learning_rate 1e-4 \
     --weight_decay 0.1 \
     --num_warmup_steps 2000 \
     --lr_scheduler_type cosine \

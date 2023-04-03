@@ -18,7 +18,7 @@ CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" accelerate launch \
     --per_device_train_batch_size $bs \
     --per_device_eval_batch_size $bs \
     --gradient_accumulation_steps 4 \
-    --learning_rate 2e-5 \
+    --learning_rate 1e-4 \
     --weight_decay 0.1 \
     --num_warmup_steps 2000 \
     --lr_scheduler_type cosine \
