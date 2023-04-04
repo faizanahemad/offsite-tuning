@@ -793,7 +793,7 @@ def add_small_student_adapters_to_student(student, model, args, ):
 
                 return outputs  # hidden_states, present, (attentions, cross_attentions)
             return forward
-        module.forward = new_forward(first)
+        module.forward = new_forward(first_layer)
         module.forward = new_forward(last_layer)
         
         
