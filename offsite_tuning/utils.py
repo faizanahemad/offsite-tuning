@@ -641,8 +641,12 @@ def add_small_student_adapters_to_student(student, model, args, ):
         student_config = model.student.config
         first_adapter = LargeSmallModelPatch(model_config.hidden_size, student_config.hidden_size, student_config.activation_function, student_config.layer_norm_epsilon, student_config.initializer_range, internal_expansion_factor=4, dropout=student_config.resid_pdrop)
         last_adapter = LargeSmallModelPatch(student_config.hidden_size, model_config.hidden_size, student_config.activation_function, student_config.layer_norm_epsilon, student_config.initializer_range, internal_expansion_factor=4, dropout=model_config.resid_pdrop)
-        student.insert(0, first_adapter)
-        student.append(last_adapter)
+        first_layer = deepcopy(get_layers(model)[0])
+        first_layer.mlp = first_adapter
+        last_layer = deepcopy(student[0])
+        last_layer.mlp = last_adapter
+        student.insert(0, first_layer)
+        student.append(last_layer)
     return student
 
 def setup_teacher_student(model, args, accelerator):
