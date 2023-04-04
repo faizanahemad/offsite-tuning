@@ -660,9 +660,9 @@ def add_small_student_adapters_to_student(student, model, args, load_student=Fal
                 use_cache,
                 output_attentions,
             ):
-                outputs = [None, None]
+                outputs = (None, None)
                 if encoder_hidden_states is not None:
-                    outputs += [None]
+                    outputs += (None,)
                 residual = hidden_states
                 hidden_states = self.ln_2(hidden_states)
                 feed_forward_hidden_states = self.mlp(hidden_states)
