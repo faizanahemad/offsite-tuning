@@ -284,8 +284,9 @@ def main():
     # print_code(model.forward)
     train_dataloader, eval_dataloader = get_dataloaders(args)
     if args.load_student and not args.restart_training:
+        results_dir = args.load_student if os.path.isdir(args.load_student) else os.path.dirname(args.load_student)
         base_results = json.load(
-            open(os.path.join(args.load_student, 'all_results.json'), 'r'))
+            open(os.path.join(results_dir, 'all_results.json'), 'r'))
         starting_epoch = base_results['epoch']
         resume_step = base_results['step'] - \
             starting_epoch * len(train_dataloader)
