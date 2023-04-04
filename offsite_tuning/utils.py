@@ -660,6 +660,7 @@ def add_small_student_adapters_to_student(student, model, args, load_student=Fal
                 use_cache,
                 output_attentions,
             ):
+                outputs = []
                 residual = hidden_states
                 hidden_states = self.ln_2(hidden_states)
                 feed_forward_hidden_states = self.mlp(hidden_states)
@@ -670,6 +671,7 @@ def add_small_student_adapters_to_student(student, model, args, load_student=Fal
                     hidden_states = torch.cat([residual, feed_forward_hidden_states[..., residual.size(-1):]], dim=-1) + feed_forward_hidden_states # feed_forward_hidden_states[..., residual.size(-1):]
 
                 if use_cache:
+                    raise NotImplementedError
                     outputs = (hidden_states,) + outputs
                 else:
                     outputs = (hidden_states,) + outputs[1:]
