@@ -432,8 +432,10 @@ def main():
                 skipped_steps += 1
                 continue
             
-            if completed_steps > args.small_student_patch_warmup_steps and args.student_model_name_or_path and not args.load_student and not small_student_patch_warmup_steps_completed:
+            if completed_steps >= args.small_student_patch_warmup_steps and args.student_model_name_or_path and not args.load_student and not small_student_patch_warmup_steps_completed:
                 small_student_patch_warmup_steps_completed = True
+                logger.info(
+                    f"epoch {epoch} step {completed_steps}: student_ppl: {perplexity:.4f} plug_ppl: {plug_ppl:.4f} lm_loss: {lm_loss:.4f} kd_loss: {kd_loss:.4f} \nCompleted Warmup for Small Student Patch.")
                 for param in (model.module if hasattr(model, "module") else model).student.parameters():
                     param.requires_grad = True
                 
@@ -477,7 +479,7 @@ def main():
             else:
                 continue
 
-            if completed_steps % args.eval_steps == 0:
+            if (completed_steps % args.eval_steps == 0) or (completed_steps == args.small_student_patch_warmup_steps and small_student_patch_warmup_steps_completed):
                 if not args.no_teacher:
                     to_teacher(model.module if hasattr(model, "module") else model, args)
                     plug_eval_loss, plug_ppl = eval_epoch()
