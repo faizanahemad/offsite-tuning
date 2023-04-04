@@ -52,7 +52,7 @@ class LargeSmallModelPatch(nn.Module):
         hidden_states = self.dropout(hidden_states)
         
         # residual connection
-        hidden_states = residual + hidden_states
+        hidden_states = residual[..., :hidden_states.size(-1)] + hidden_states
         return hidden_states
     
 
