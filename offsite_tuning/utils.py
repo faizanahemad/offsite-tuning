@@ -634,7 +634,7 @@ def set_layers(model, layers):
     else:
         raise NotImplementedError
 
-def add_small_student_adapters_to_student(student, model, args, ):
+def add_small_student_adapters_to_student(student, model, args, load_student=False):
     if hasattr(model, "student") and args.student_model_name_or_path:
         assert isinstance(model, GPT2LMHeadModel)
         model_config = model.config
@@ -715,7 +715,8 @@ def add_small_student_adapters_to_student(student, model, args, ):
             return forward
         first_layer.forward = new_forward(first_layer)
         last_layer.forward = new_forward(last_layer)
-        
+        if load_student:
+            student = student[2:]
         
         student.insert(0, first_layer)
         student.append(last_layer)
@@ -741,7 +742,7 @@ def setup_teacher_student(model, args, accelerator):
         logger.info(
             f"Loading student module from {args.load_student} with {student_layers_len} layers.")
         student = deepcopy(student_layers[:student_layers_len])
-        add_small_student_adapters_to_student(student, model, args)
+        add_small_student_adapters_to_student(student, model, args, load_student=True)
         student.load_state_dict(student_state_dict)
     else:
         assert args.student_l_pad + args.student_r_pad < len(student_layers)
