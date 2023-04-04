@@ -45,6 +45,7 @@ from transformers.models.opt.modeling_opt import OPTForCausalLM, OPTModel
 from transformers.models.bloom.modeling_bloom import BloomForCausalLM, BloomModel
 
 from accelerate import Accelerator, DistributedType
+from accelerate import DistributedDataParallelKwargs
 from accelerate.logging import get_logger
 from accelerate.utils import set_seed
 from transformers import (
@@ -164,8 +165,9 @@ def main():
     accelerator_log_kwargs["log_with"] = args.report_to
     accelerator_log_kwargs["logging_dir"] = args.output_dir
 
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
     accelerator = Accelerator(
-        gradient_accumulation_steps=args.gradient_accumulation_steps, **accelerator_log_kwargs)
+        gradient_accumulation_steps=args.gradient_accumulation_steps, kwargs_handlers=[ddp_kwargs], **accelerator_log_kwargs)
 
     # Handle the repository creation
     if accelerator.is_main_process:
