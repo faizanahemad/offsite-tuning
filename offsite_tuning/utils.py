@@ -649,7 +649,7 @@ def add_small_student_adapters_to_student(student, model, args, load_student=Fal
         last_adapter = LargeSmallModelPatch(student_config.hidden_size, model_config.hidden_size, student_config.activation_function, student_config.layer_norm_epsilon, student_config.initializer_range, internal_expansion_factor=4, dropout=model_config.resid_pdrop)
         
         assert args.student_l_pad > 0
-        first_layer = deepcopy(get_layers(model)[args.student_l_pad - 1])
+        first_layer = deepcopy(get_layers(model)[args.student_l_pad])
         first_layer.mlp = first_adapter
         last_layer = deepcopy(student[-1])
         last_layer.mlp = last_adapter

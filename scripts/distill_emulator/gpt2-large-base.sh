@@ -1,7 +1,7 @@
 # l25
 MODEL="gpt2-large"
 student_model_name_or_path="gpt2"
-num_student_layers=8
+num_student_layers=6
 bs=8
 pad=2
 
@@ -29,7 +29,7 @@ CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" accelerate launch \
     --seed 42 \
     --block_size 512 \
     --eval_steps 100 \
-    --small_student_patch_warmup_steps 800 \
+    --small_student_patch_warmup_steps 200 \
     --num_student_layers $num_student_layers \
     --student_l_pad $pad \
     --student_r_pad $pad \
