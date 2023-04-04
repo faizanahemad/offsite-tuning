@@ -415,7 +415,7 @@ def main():
     # update the progress_bar if load from checkpoint
     progress_bar.update(starting_epoch * num_update_steps_per_epoch)
     completed_steps = starting_epoch * num_update_steps_per_epoch
-
+    small_student_patch_warmup_steps_completed = False
     for epoch in range(starting_epoch, args.num_train_epochs):
         model.train()
         total_lm_loss, total_kd_loss = 0, 0
@@ -431,7 +431,13 @@ def main():
                 completed_steps += 1
                 skipped_steps += 1
                 continue
-
+            
+            if completed_steps > args.small_student_patch_warmup_steps and args.student_model_name_or_path and not args.load_student and not small_student_patch_warmup_steps_completed:
+                small_student_patch_warmup_steps_completed = True
+                for param in (model.module if hasattr(model, "module") else model).student.parameters():
+                    param.requires_grad = True
+                
+            
             with accelerator.accumulate(model):
                 with torch.autocast("cuda" if torch.cuda.is_available() else "cpu"):
                     outputs = model(**batch)

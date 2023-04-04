@@ -379,6 +379,12 @@ def get_args():
         type=int,
         default=200,
     )
+    
+    parser.add_argument(
+        '--small_student_patch_warmup_steps',
+        type=int,
+        default=800,
+    )
 
     parser.add_argument(
         '--num_student_layers',
@@ -712,7 +718,7 @@ def setup_teacher_student(model, args, accelerator):
 
     layers = get_layers(model)
     
-    if hasattr(model, "student"):
+    if args.student_model_name_or_path:
         student_layers = get_layers(model.student)
     else:
         student_layers = layers
@@ -753,8 +759,17 @@ def setup_teacher_student(model, args, accelerator):
         quantize(student, args.weight_quantization_bits)
 
     if args.train_module == 'student':
-        for param in student.parameters():
-            param.data = param.data.float()
+        if args.student_model_name_or_path and args.num_train_epochs > 1 and not args.load_student and args.small_student_patch_warmup_steps > 0:
+            for param in student.parameters():
+                param.data = param.data.float()
+                param.requires_grad = False
+            for param in student[0].parameters():
+                param.requires_grad = True
+            for param in student[-1].parameters():
+                param.requires_grad = True
+        else:
+            for param in student.parameters():
+                param.data = param.data.float()
             param.requires_grad = True
     elif args.train_module == 'adapter':
         for param in student.parameters():
