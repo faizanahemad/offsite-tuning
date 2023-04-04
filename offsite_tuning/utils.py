@@ -742,7 +742,7 @@ def setup_teacher_student(model, args, accelerator):
         logger.info(
             f"Loading student module from {args.load_student} with {student_layers_len} layers.")
         student = deepcopy(student_layers[:student_layers_len])
-        add_small_student_adapters_to_student(student, model, args, load_student=True)
+        student = add_small_student_adapters_to_student(student, model, args, load_student=True)
         student.load_state_dict(student_state_dict)
     else:
         assert args.student_l_pad + args.student_r_pad < len(student_layers)
@@ -754,7 +754,7 @@ def setup_teacher_student(model, args, accelerator):
             student = uniform_choose_layers(student, args.num_student_layers)
         else:
             raise NotImplementedError
-        add_small_student_adapters_to_student(student, model, args)
+        student = add_small_student_adapters_to_student(student, model, args)
 
     student = student.to(accelerator.device)
 
