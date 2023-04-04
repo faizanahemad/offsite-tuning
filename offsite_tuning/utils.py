@@ -12,7 +12,7 @@ from transformers import (
     BloomForCausalLM,
     ViTForImageClassification,
 )
-from transformers.models.gpt2.modeling_gpt2 import GPT2MLP
+from transformers.models.gpt2.modeling_gpt2 import GPT2MLP, GPT2Attention
 from transformers.activations import ACT2FN
 
 from offsite_tuning.models.clip_vit import CLIPViTForImageClassification
@@ -28,23 +28,24 @@ MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
 
 logger = get_logger(__name__)
 
+
 class LargeSmallModelPatch(nn.Module):
     def __init__(self, input_dim, output_dim, activation_fn, layer_norm_epsilon, initializer_range, internal_expansion_factor=4, dropout=0.1):
         super().__init__()
         # TODO: param init
-        self.ln_1 = nn.LayerNorm(input_dim, eps=layer_norm_epsilon)
+        # self.ln_1 = nn.LayerNorm(input_dim, eps=layer_norm_epsilon)
         self.fc1 = nn.Linear(input_dim, input_dim * internal_expansion_factor)
         self.fc2 = nn.Linear(input_dim * internal_expansion_factor, output_dim)
         self.act = ACT2FN[activation_fn]
         self.dropout = nn.Dropout(dropout)
-        self.ln_1.bias.data.zero_()
-        self.ln_1.weight.data.fill_(1.0)
+        # self.ln_1.bias.data.zero_()
+        # self.ln_1.weight.data.fill_(1.0)
         self.fc1.weight.data.normal_(mean=0.0, std=initializer_range)
         self.fc2.weight.data.normal_(mean=0.0, std=initializer_range)
         
     def forward(self, hidden_states):
-        residual = hidden_states
-        hidden_states = self.ln_1(hidden_states)
+        # residual = hidden_states
+        # hidden_states = self.ln_1(hidden_states)
         
         hidden_states = self.fc1(hidden_states)
         hidden_states = self.act(hidden_states)
@@ -52,8 +53,87 @@ class LargeSmallModelPatch(nn.Module):
         hidden_states = self.dropout(hidden_states)
         
         # residual connection
-        hidden_states = residual[..., :hidden_states.size(-1)] + hidden_states
+        # hidden_states = residual[..., :hidden_states.size(-1)] + hidden_states
         return hidden_states
+    
+
+class GPT2BlockPatch(nn.Module):
+    def __init__(self, config, layer_idx=None):
+        super().__init__()
+        hidden_size = config.hidden_size
+        inner_dim = config.n_inner if config.n_inner is not None else 4 * hidden_size
+
+        self.ln_1 = nn.LayerNorm(hidden_size, eps=config.layer_norm_epsilon)
+        self.attn = GPT2Attention(config, layer_idx=layer_idx)
+        self.ln_2 = nn.LayerNorm(hidden_size, eps=config.layer_norm_epsilon)
+
+        if config.add_cross_attention:
+            self.crossattention = GPT2Attention(config, is_cross_attention=True, layer_idx=layer_idx)
+            self.ln_cross_attn = nn.LayerNorm(hidden_size, eps=config.layer_norm_epsilon)
+
+        self.mlp = GPT2MLP(inner_dim, config)
+
+    def forward(
+        self,
+        hidden_states,
+        layer_past,
+        attention_mask,
+        head_mask,
+        encoder_hidden_states,
+        encoder_attention_mask,
+        use_cache,
+        output_attentions,
+    ):
+        residual = hidden_states
+        hidden_states = self.ln_1(hidden_states)
+        attn_outputs = self.attn(
+            hidden_states,
+            layer_past=layer_past,
+            attention_mask=attention_mask,
+            head_mask=head_mask,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+        )
+        attn_output = attn_outputs[0]  # output_attn: a, present, (attentions)
+        outputs = attn_outputs[1:]
+        # residual connection
+        hidden_states = attn_output + residual
+
+        if encoder_hidden_states is not None:
+            # add one self-attention block for cross-attention
+            if not hasattr(self, "crossattention"):
+                raise ValueError(
+                    f"If `encoder_hidden_states` are passed, {self} has to be instantiated with "
+                    "cross-attention layers by setting `config.add_cross_attention=True`"
+                )
+            residual = hidden_states
+            hidden_states = self.ln_cross_attn(hidden_states)
+            cross_attn_outputs = self.crossattention(
+                hidden_states,
+                attention_mask=attention_mask,
+                head_mask=head_mask,
+                encoder_hidden_states=encoder_hidden_states,
+                encoder_attention_mask=encoder_attention_mask,
+                output_attentions=output_attentions,
+            )
+            attn_output = cross_attn_outputs[0]
+            # residual connection
+            hidden_states = residual + attn_output
+            outputs = outputs + cross_attn_outputs[2:]  # add cross attentions if we output attention weights
+
+        residual = hidden_states
+        hidden_states = self.ln_2(hidden_states)
+        feed_forward_hidden_states = self.mlp(hidden_states)
+        # residual connection
+        hidden_states = residual + feed_forward_hidden_states
+
+        if use_cache:
+            outputs = (hidden_states,) + outputs
+        else:
+            outputs = (hidden_states,) + outputs[1:]
+
+        return outputs  # hidden_states, present, (attentions, cross_attentions)
+
     
 
 
@@ -641,10 +721,82 @@ def add_small_student_adapters_to_student(student, model, args, ):
         student_config = model.student.config
         first_adapter = LargeSmallModelPatch(model_config.hidden_size, student_config.hidden_size, student_config.activation_function, student_config.layer_norm_epsilon, student_config.initializer_range, internal_expansion_factor=4, dropout=student_config.resid_pdrop)
         last_adapter = LargeSmallModelPatch(student_config.hidden_size, model_config.hidden_size, student_config.activation_function, student_config.layer_norm_epsilon, student_config.initializer_range, internal_expansion_factor=4, dropout=model_config.resid_pdrop)
+        
+        
         first_layer = deepcopy(get_layers(model)[0])
         first_layer.mlp = first_adapter
-        last_layer = deepcopy(student[0])
+        last_layer = deepcopy(student[-1])
         last_layer.mlp = last_adapter
+        
+        
+        def new_forward(self):
+            def forward(
+                hidden_states,
+                layer_past,
+                attention_mask,
+                head_mask,
+                encoder_hidden_states,
+                encoder_attention_mask,
+                use_cache,
+                output_attentions,
+            ):
+                residual = hidden_states
+                hidden_states = self.ln_1(hidden_states)
+                attn_outputs = self.attn(
+                    hidden_states,
+                    layer_past=layer_past,
+                    attention_mask=attention_mask,
+                    head_mask=head_mask,
+                    use_cache=use_cache,
+                    output_attentions=output_attentions,
+                )
+                attn_output = attn_outputs[0]  # output_attn: a, present, (attentions)
+                outputs = attn_outputs[1:]
+                # residual connection
+                hidden_states = attn_output + residual
+
+                if encoder_hidden_states is not None:
+                    # add one self-attention block for cross-attention
+                    if not hasattr(self, "crossattention"):
+                        raise ValueError(
+                            f"If `encoder_hidden_states` are passed, {self} has to be instantiated with "
+                            "cross-attention layers by setting `config.add_cross_attention=True`"
+                        )
+                    residual = hidden_states
+                    hidden_states = self.ln_cross_attn(hidden_states)
+                    cross_attn_outputs = self.crossattention(
+                        hidden_states,
+                        attention_mask=attention_mask,
+                        head_mask=head_mask,
+                        encoder_hidden_states=encoder_hidden_states,
+                        encoder_attention_mask=encoder_attention_mask,
+                        output_attentions=output_attentions,
+                    )
+                    attn_output = cross_attn_outputs[0]
+                    # residual connection
+                    hidden_states = residual + attn_output
+                    outputs = outputs + cross_attn_outputs[2:]  # add cross attentions if we output attention weights
+
+                residual = hidden_states
+                hidden_states = self.ln_2(hidden_states)
+                feed_forward_hidden_states = self.mlp(hidden_states)
+                # residual connection
+                if feed_forward_hidden_states.size(-1) < residual.size(-1):
+                    hidden_states = residual[..., :feed_forward_hidden_states.size(-1)] + feed_forward_hidden_states
+                else:
+                    hidden_states = torch.cat([residual, feed_forward_hidden_states[..., residual.size(-1):]], dim=-1) + feed_forward_hidden_states # feed_forward_hidden_states[..., residual.size(-1):]
+
+                if use_cache:
+                    outputs = (hidden_states,) + outputs
+                else:
+                    outputs = (hidden_states,) + outputs[1:]
+
+                return outputs  # hidden_states, present, (attentions, cross_attentions)
+            return forward
+        module.forward = new_forward(first)
+        module.forward = new_forward(last_layer)
+        
+        
         student.insert(0, first_layer)
         student.append(last_layer)
     return student
