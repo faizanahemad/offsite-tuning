@@ -418,6 +418,14 @@ def main():
     small_student_patch_warmup_steps_completed = False
     for epoch in range(starting_epoch, args.num_train_epochs):
         model.train()
+        if args.student_model_name_or_path and args.num_train_epochs > 1 and not args.load_student and args.small_student_patch_warmup_steps > 0 and not small_student_patch_warmup_steps_completed:
+            student = (model.module if hasattr(model, "module") else model).student
+            for param in student.parameters():
+                param.requires_grad = False
+            for param in student[0].parameters():
+                param.requires_grad = True
+            for param in student[-1].parameters():
+                param.requires_grad = True
         total_lm_loss, total_kd_loss = 0, 0
         interval_lm_loss, interval_kd_loss = 0, 0
         best_lm_loss, best_kd_loss = float("inf"), float("inf")
