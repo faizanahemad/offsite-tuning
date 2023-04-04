@@ -642,8 +642,8 @@ def add_small_student_adapters_to_student(student, model, args, ):
         first_adapter = LargeSmallModelPatch(model_config.hidden_size, student_config.hidden_size, student_config.activation_function, student_config.layer_norm_epsilon, student_config.initializer_range, internal_expansion_factor=4, dropout=student_config.resid_pdrop)
         last_adapter = LargeSmallModelPatch(student_config.hidden_size, model_config.hidden_size, student_config.activation_function, student_config.layer_norm_epsilon, student_config.initializer_range, internal_expansion_factor=4, dropout=model_config.resid_pdrop)
         
-        
-        first_layer = deepcopy(get_layers(model)[0])
+        assert args.student_l_pad > 0
+        first_layer = deepcopy(get_layers(model)[args.student_l_pad - 1])
         first_layer.mlp = first_adapter
         last_layer = deepcopy(student[-1])
         last_layer.mlp = last_adapter
@@ -735,8 +735,7 @@ def setup_teacher_student(model, args, accelerator):
     
     l, r = args.student_l_pad, len(layers) - args.student_r_pad
     if args.load_student:
-        student_state_dict = torch.load(os.path.join(
-            args.load_student, 'student.pt'), map_location='cpu')
+        student_state_dict = torch.load(args.load_student, map_location='cpu')
         student_layers_len = len(
             set([k.split('.')[0] for k in student_state_dict.keys()]))
         logger.info(

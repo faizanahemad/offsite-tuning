@@ -12,7 +12,7 @@ CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" accelerate launch \
     --mixed_precision=fp16 --multi_gpu \
     offsite_tuning/run_clm.py \
     --model_name_or_path $MODEL \
-    --train_tokenized_dataset $HOME/processed_datasets/wikitext_tokenized_blocks \
+    --train_tokenized_dataset $HOME/processed_datasets/pile_subsampled_tokenized_blocks \
     --val_tokenized_dataset $HOME/processed_datasets/wikitext_tokenized_blocks \
     --preprocessing_num_workers 88 \
     --per_device_train_batch_size $bs \
