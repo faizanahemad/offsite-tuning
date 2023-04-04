@@ -231,6 +231,18 @@ def main():
     else:
         logger.info("Training new model from scratch")
         model = AutoModelForCausalLM.from_config(config)
+        
+    if args.student_model_name_or_path:
+        stu_config = AutoConfig.from_pretrained(args.student_model_name_or_path)
+        stu_model = AutoModelForCausalLM.from_pretrained(
+            args.student_model_name_or_path,
+            from_tf=bool(".ckpt" in args.student_model_name_or_path),
+            config=stu_config,
+            torch_dtype=torch.float16
+        )
+        model.student = stu_model
+        model.stu_config = stu_config
+        
 
     # We resize the embeddings only when necessary to avoid index errors. If you are creating a model from scratch
     # on a small vocab and want a smaller embedding size, remove this test.
@@ -375,14 +387,14 @@ def main():
         return eval_loss, perplexity
 
     if not args.no_teacher:
-        to_teacher(model.module, args)
+        to_teacher(model.module if hasattr(model, "module") else model, args)
         _, teacher_zero_shot_perplexity = eval_epoch()
         logger.info(
             f"Teacher zero shot perplexity: {teacher_zero_shot_perplexity}")
     else:
         teacher_zero_shot_perplexity = 0
 
-    to_student(model.module, args)
+    to_student(model.module if hasattr(model, "module") else model, args)
 
     # for name, param in model.named_parameters():
     #     logger.info(
@@ -424,7 +436,7 @@ def main():
                     outputs = model(**batch)
                 lm_loss = outputs.loss
                 if not args.no_teacher:
-                    kd_loss = get_kd_loss(model.module)
+                    kd_loss = get_kd_loss(model.module if hasattr(model, "module") else model)
                 else:
                     kd_loss = 0
 
@@ -460,11 +472,11 @@ def main():
 
             if completed_steps % args.eval_steps == 0:
                 if not args.no_teacher:
-                    to_teacher(model.module, args)
+                    to_teacher(model.module if hasattr(model, "module") else model, args)
                     plug_eval_loss, plug_ppl = eval_epoch()
                 else:
                     plug_eval_loss, plug_ppl = 0, 0
-                to_student(model.module, args)
+                to_student(model.module if hasattr(model, "module") else model, args)
                 eval_loss, perplexity = eval_epoch()
 
                 lm_loss = interval_lm_loss / args.eval_steps

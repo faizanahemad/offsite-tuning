@@ -1,7 +1,8 @@
 # l25
-MODEL="gpt2-xl"
+MODEL="gpt2-large"
+student_model_name_or_path="gpt2"
 num_student_layers=8
-bs=1
+bs=2
 pad=2
 
 
@@ -17,7 +18,7 @@ CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" accelerate launch \
     --preprocessing_num_workers 88 \
     --per_device_train_batch_size $bs \
     --per_device_eval_batch_size $bs \
-    --gradient_accumulation_steps 8 \
+    --gradient_accumulation_steps 4 \
     --learning_rate 1e-4 \
     --weight_decay 0.1 \
     --num_warmup_steps 2000 \
@@ -32,4 +33,5 @@ CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" accelerate launch \
     --student_l_pad $pad \
     --student_r_pad $pad \
     --output_dir emulators/${MODEL}/${num_student_layers}_${pad}_${pad} \
-    --report_to wandb
+    --report_to wandb \
+    --student_model_name_or_path $student_model_name_or_path

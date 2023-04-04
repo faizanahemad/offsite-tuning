@@ -12,8 +12,12 @@ from transformers import (
     BloomForCausalLM,
     ViTForImageClassification,
 )
+from transformers.models.gpt2.modeling_gpt2 import GPT2MLP
+from transformers.activations import ACT2FN
+
 from offsite_tuning.models.clip_vit import CLIPViTForImageClassification
 from offsite_tuning.models.eva_vit import EVAViTForImageClassification
+
 
 import argparse
 
@@ -23,6 +27,34 @@ MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
 
 
 logger = get_logger(__name__)
+
+class LargeSmallModelPatch(nn.Module):
+    def __init__(self, input_dim, output_dim, activation_fn, layer_norm_epsilon, initializer_range, internal_expansion_factor=4, dropout=0.1):
+        super().__init__()
+        # TODO: param init
+        self.ln_1 = nn.LayerNorm(input_dim, eps=layer_norm_epsilon)
+        self.fc1 = nn.Linear(input_dim, input_dim * internal_expansion_factor)
+        self.fc2 = nn.Linear(input_dim * internal_expansion_factor, output_dim)
+        self.act = ACT2FN[activation_fn]
+        self.dropout = nn.Dropout(dropout)
+        self.ln_1.bias.data.zero_()
+        self.ln_1.weight.data.fill_(1.0)
+        self.fc1.weight.data.normal_(mean=0.0, std=initializer_range)
+        self.fc2.weight.data.normal_(mean=0.0, std=initializer_range)
+        
+    def forward(self, hidden_states):
+        residual = hidden_states
+        hidden_states = self.ln_1(hidden_states)
+        
+        hidden_states = self.fc1(hidden_states)
+        hidden_states = self.act(hidden_states)
+        hidden_states = self.fc2(hidden_states)
+        hidden_states = self.dropout(hidden_states)
+        
+        # residual connection
+        hidden_states = residual + hidden_states
+        return hidden_states
+    
 
 
 class MLP(nn.Module):
@@ -165,6 +197,12 @@ def get_args():
     )
     parser.add_argument(
         "--model_name_or_path",
+        type=str,
+        help="Path to pretrained model or model identifier from huggingface.co/models.",
+        required=False,
+    )
+    parser.add_argument(
+        "--student_model_name_or_path",
         type=str,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
         required=False,
@@ -596,13 +634,29 @@ def set_layers(model, layers):
     else:
         raise NotImplementedError
 
+def add_small_student_adapters_to_student(student, model, args, ):
+    if hasattr(model, "student") and args.student_model_name_or_path:
+        assert isinstance(model, GPT2LMHeadModel)
+        model_config = model.config
+        student_config = model.student.config
+        first_adapter = LargeSmallModelPatch(model_config.hidden_size, student_config.hidden_size, student_config.activation_function, student_config.layer_norm_epsilon, student_config.initializer_range, internal_expansion_factor=4, dropout=student_config.resid_pdrop)
+        last_adapter = LargeSmallModelPatch(student_config.hidden_size, model_config.hidden_size, student_config.activation_function, student_config.layer_norm_epsilon, student_config.initializer_range, internal_expansion_factor=4, dropout=model_config.resid_pdrop)
+        student.insert(0, first_adapter)
+        student.append(last_adapter)
+    return student
 
 def setup_teacher_student(model, args, accelerator):
     for param in model.parameters():
         param.requires_grad = False
 
     layers = get_layers(model)
-
+    
+    if hasattr(model, "student"):
+        student_layers = get_layers(model.student)
+    else:
+        student_layers = layers
+        
+    
     l, r = args.student_l_pad, len(layers) - args.student_r_pad
     if args.load_student:
         student_state_dict = torch.load(os.path.join(
@@ -611,15 +665,20 @@ def setup_teacher_student(model, args, accelerator):
             set([k.split('.')[0] for k in student_state_dict.keys()]))
         logger.info(
             f"Loading student module from {args.load_student} with {student_layers_len} layers.")
-        student = deepcopy(layers[:student_layers_len])
+        student = deepcopy(student_layers[:student_layers_len])
+        add_small_student_adapters_to_student(student, model, args)
         student.load_state_dict(student_state_dict)
     else:
-        student = deepcopy(layers[l:r])
-
-    if args.student_layer_selection_strategy == 'uniform':
-        student = uniform_choose_layers(student, args.num_student_layers)
-    else:
-        raise NotImplementedError
+        assert args.student_l_pad + args.student_r_pad < len(student_layers)
+        t_2_s_ratio = len(layers) // len(student_layers)
+        stu_l, stu_r = args.student_l_pad//t_2_s_ratio, len(student_layers) - args.student_r_pad//t_2_s_ratio
+        student = deepcopy(student_layers[stu_l:stu_r])
+        if args.student_layer_selection_strategy == 'uniform':
+            # TODO: Think can we downsamlpe twice and double distil to make smaller students
+            student = uniform_choose_layers(student, args.num_student_layers)
+        else:
+            raise NotImplementedError
+        add_small_student_adapters_to_student(student, model, args)
 
     student = student.to(accelerator.device)
 
