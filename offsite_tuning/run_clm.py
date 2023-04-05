@@ -98,7 +98,7 @@ def print_code(func):
     print(highlight(code, PythonLexer(), TerminalFormatter()))
 
     
-def get_dataloaders(args, tokenizer):
+def get_dataloaders(args, tokenizer, accelerator):
     if args.dataset_name in task_dict:  # special case for e2e_nlg dataset
         raw_datasets = get_raw_datasets(args)
         lm_datasets = process_text2text_datasets(
@@ -286,7 +286,7 @@ def main():
     # print_code(model.__call__)
     # print_code(model.forward)
     
-    train_dataloader, eval_dataloader = get_dataloaders(args, tokenizer)
+    train_dataloader, eval_dataloader = get_dataloaders(args, tokenizer, accelerator)
     if args.load_student and not args.restart_training:
         results_dir = args.load_student if os.path.isdir(args.load_student) else os.path.dirname(args.load_student)
         base_results = json.load(
