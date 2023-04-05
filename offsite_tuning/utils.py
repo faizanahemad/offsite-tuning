@@ -726,6 +726,8 @@ def setup_teacher_student(model, args, accelerator):
     
     l, r = args.student_l_pad, len(layers) - args.student_r_pad
     if args.load_student:
+        logger.info(
+            f"Loading student module from {args.load_student}")
         student_state_dict = torch.load(args.load_student, map_location='cpu')
         student_layers_len = len(
             set([k.split('.')[0] for k in student_state_dict.keys()]))
@@ -746,6 +748,8 @@ def setup_teacher_student(model, args, accelerator):
                 raise NotImplementedError
             
     else:
+        logger.info(
+            f"Training new student with {args.num_student_layers} layers")
         assert args.student_l_pad + args.student_r_pad < len(student_layers)
         t_2_s_ratio = len(layers) // len(student_layers)
         stu_l, stu_r = args.student_l_pad//t_2_s_ratio, len(student_layers) - args.student_r_pad//t_2_s_ratio
