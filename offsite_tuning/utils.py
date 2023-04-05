@@ -726,13 +726,15 @@ def setup_teacher_student(model, args, accelerator):
     
     l, r = args.student_l_pad, len(layers) - args.student_r_pad
     if args.load_student:
+        student_path = args.load_student if os.path.isfile(args.load_student) else os.path.join(args.load_student, "student.pt")
+        assert os.path.isfile(student_path)
         logger.info(
-            f"Loading student module from {args.load_student}")
-        student_state_dict = torch.load(args.load_student, map_location='cpu')
+            f"Loading student module from {student_path}")
+        student_state_dict = torch.load(student_path, map_location='cpu')
         student_layers_len = len(
             set([k.split('.')[0] for k in student_state_dict.keys()]))
         logger.info(
-            f"Loading student module from {args.load_student} with {student_layers_len} layers.")
+            f"Loading student module from {student_path} with {student_layers_len} layers.")
         student = deepcopy(student_layers[:student_layers_len])
         student = add_small_student_adapters_to_student(student, model, args, load_student=True)
         student.load_state_dict(student_state_dict)
