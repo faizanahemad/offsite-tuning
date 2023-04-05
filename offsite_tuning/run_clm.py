@@ -249,6 +249,7 @@ def main():
     # We resize the embeddings only when necessary to avoid index errors. If you are creating a model from scratch
     # on a small vocab and want a smaller embedding size, remove this test.
     # print(model)
+    logger.info(f"Creating Student and Teacher with student layers = : {args.num_student_layers} and load student = {args.load_student} and student pad = {args.student_l_pad} and student = {args.student_model_name_or_path}")
     model = setup_teacher_student(model, args, accelerator)
 
     if args.no_teacher:
