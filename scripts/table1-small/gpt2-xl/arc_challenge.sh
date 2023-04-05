@@ -1,6 +1,6 @@
 TASK="arc_challenge"
-MODEL="gpt2-xl"
-num_student_layers=16
+MODEL="gpt2-large"
+num_student_layers=4
 bs=4
 pad=2
 eval_steps=10

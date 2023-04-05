@@ -1,8 +1,8 @@
-MODEL="gpt2-xl"
+MODEL="gpt2-large"
 bs=1
 
 CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" accelerate launch \
-    --mixed_precision=bf16 --multi_gpu \
+    --mixed_precision=fp16 --multi_gpu \
     offsite_tuning/run_clm.py \
     --model_name_or_path $MODEL \
     --dataset_name wikitext \
@@ -23,13 +23,13 @@ CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" accelerate launch \
     --train_module all \
     --output_dir logs/table1-small/${MODEL}/ft_all/wikitext-2-raw-v1
 
-num_student_layers=16
+num_student_layers=4
 bs=8
 pad=2
 lr=1e-4
 
 CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" accelerate launch \
-    --mixed_precision=bf16 --multi_gpu \
+    --mixed_precision=fp16 --multi_gpu \
     offsite_tuning/run_clm.py \
     --model_name_or_path $MODEL \
     --dataset_name wikitext \
