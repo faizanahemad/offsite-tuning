@@ -734,6 +734,17 @@ def setup_teacher_student(model, args, accelerator):
         student = deepcopy(student_layers[:student_layers_len])
         student = add_small_student_adapters_to_student(student, model, args, load_student=True)
         student.load_state_dict(student_state_dict)
+        if len(student) > args.num_student_layers:
+            if args.student_layer_selection_strategy == 'uniform':
+                # TODO: Think can we downsamlpe twice and double distil to make smaller students
+                student_mid = uniform_choose_layers(student[1:-1], args.num_student_layers-2)
+                student_mid.insert(0, student[0])
+                student_mid.append(student[-1])
+                student = student_mid
+                
+            else:
+                raise NotImplementedError
+            
     else:
         assert args.student_l_pad + args.student_r_pad < len(student_layers)
         t_2_s_ratio = len(layers) // len(student_layers)
