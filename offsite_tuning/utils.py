@@ -963,7 +963,13 @@ def load_student(model, student_state_dict, args):
     student_layers_len = len(
         set([k.split('.')[0] for k in student_state_dict.keys()]))
     logger.info(f"Loading student module from with {student_layers_len} layers.")
+    
+    if args.student_model_name_or_path:
+        student_layers = get_layers(model.student)
+    
+    
     if isinstance(model, OPTForCausalLM):
+        assert not args.student_model_name_or_path
         r = len(model.model.decoder.layers) - args.student_r_pad
         student_layers = model.model.decoder.layers[l:l+student_layers_len]
         student_layers.load_state_dict(student_state_dict)
@@ -971,11 +977,15 @@ def load_student(model, student_state_dict, args):
             student_layers + model.model.decoder.layers[r:]
     elif isinstance(model, GPT2LMHeadModel):
         r = len(model.transformer.h) - args.student_r_pad
-        student_layers = model.transformer.h[l:l+student_layers_len]
+        if args.student_model_name_or_path:
+            student_layers = get_layers(model.student)
+        else:
+            student_layers = model.transformer.h[l:l+student_layers_len]
         student_layers.load_state_dict(student_state_dict)
         model.transformer.h = model.transformer.h[:l] + \
             student_layers + model.transformer.h[r:]
     elif isinstance(model, BloomForCausalLM):
+        assert not args.student_model_name_or_path
         r = len(model.transformer.h) - args.student_r_pad
         student_layers = model.transformer.h[l:l+student_layers_len]
         student_layers.load_state_dict(student_state_dict)

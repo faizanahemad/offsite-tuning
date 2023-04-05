@@ -27,6 +27,7 @@ num_student_layers=4
 bs=8
 pad=2
 lr=1e-4
+student_model_name_or_path="gpt2"
 
 CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" accelerate launch \
     --mixed_precision=fp16 --multi_gpu \
@@ -52,4 +53,5 @@ CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" accelerate launch \
     --train_module adapter \
     --restart_training \
     --load_student emulators/${MODEL}/${num_student_layers}_${pad}_${pad} \
-    --output_dir logs/table1-small/${MODEL}/ft_distill_incubator/${num_student_layers}_2_2/wikitext-2-raw-v1
+    --output_dir logs/table1-small/${MODEL}/ft_distill_incubator/${num_student_layers}_2_2/wikitext-2-raw-v1 \
+    --student_model_name_or_path $student_model_name_or_path

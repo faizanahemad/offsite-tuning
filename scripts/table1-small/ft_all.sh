@@ -4,7 +4,6 @@ num_student_layers=$3 # 8
 bs=$4                 # 8
 pad=$5                # 2
 eval_steps=$6         # 10
-student_model_name_or_path="gpt2"
 
 ### baseline ft
 CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" accelerate launch \
@@ -23,5 +22,4 @@ CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" accelerate launch \
     --train_module all \
     --save_module all \
     --no_teacher \
-    --output_dir logs/table1-small/$MODEL/${TASK}/ft_all \
-    --student_model_name_or_path $student_model_name_or_path
+    --output_dir logs/table1-small/$MODEL/${TASK}/ft_all
