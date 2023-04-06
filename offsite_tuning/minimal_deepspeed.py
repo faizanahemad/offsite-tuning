@@ -229,6 +229,7 @@ def main():
             config=config,
             torch_dtype=torch.float16
         )
+    logger.info(f"deep speed state = {accelerator.state.deepspeed_plugin} and deep speed config = {str(accelerator.state.deepspeed_plugin.deepspeed_config)}")
         
     
         
