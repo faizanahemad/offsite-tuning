@@ -46,6 +46,7 @@ from transformers.models.bloom.modeling_bloom import BloomForCausalLM, BloomMode
 
 from accelerate import Accelerator, DistributedType
 from accelerate import DistributedDataParallelKwargs
+from accelerate.state import AcceleratorState
 from accelerate.logging import get_logger
 from accelerate.utils import set_seed
 from transformers import (
@@ -169,6 +170,7 @@ def main():
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps, kwargs_handlers=[ddp_kwargs], **accelerator_log_kwargs)
 
+    accelerator.print(f"{AcceleratorState()}")
     # Handle the repository creation
     if accelerator.is_main_process:
         if args.output_dir is not None:
