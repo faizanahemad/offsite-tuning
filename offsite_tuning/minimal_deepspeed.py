@@ -272,7 +272,13 @@ def main():
             "weight_decay": 0.0,
         },
     ]
-    optimizer = torch.optim.AdamW(
+    optimizer_cls = (
+         torch.optim.AdamW
+         if accelerator.state.deepspeed_plugin is None
+         or "optimizer" not in accelerator.state.deepspeed_plugin.deepspeed_config
+         else DummyOptim
+     )
+    optimizer = optimizer_cls(
         optimizer_grouped_parameters, lr=args.learning_rate)
 
     # Scheduler and math around the number of training steps.
@@ -283,12 +289,20 @@ def main():
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
 
-    lr_scheduler = get_scheduler(
-        name=args.lr_scheduler_type,
-        optimizer=optimizer,
-        num_warmup_steps=args.num_warmup_steps * args.gradient_accumulation_steps,
-        num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
-    )
+    if (
+         accelerator.state.deepspeed_plugin is None
+         or "scheduler" not in accelerator.state.deepspeed_plugin.deepspeed_config
+     ):
+        lr_scheduler = get_scheduler(
+            name=args.lr_scheduler_type,
+            optimizer=optimizer,
+            num_warmup_steps=args.num_warmup_steps * args.gradient_accumulation_steps,
+            num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
+        )
+    else:
+        lr_scheduler = DummyScheduler(
+             optimizer, total_num_steps=args.max_train_steps, warmup_num_steps=args.num_warmup_steps
+         )
 
     # Prepare everything with our `accelerator`.
     model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
