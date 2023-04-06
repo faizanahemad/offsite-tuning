@@ -223,15 +223,12 @@ def main():
             "You can do it from another script, save it, and load it from here, using --tokenizer_name."
         )
 
-    if args.model_name_or_path:
-        model = AutoModelForCausalLM.from_pretrained(
+    model = AutoModelForCausalLM.from_pretrained(
             args.model_name_or_path,
             from_tf=bool(".ckpt" in args.model_name_or_path),
             config=config,
             torch_dtype=torch.float16
         )
-    else:
-        raise NotImplementedError
         
     
         
@@ -332,9 +329,9 @@ def main():
         model.eval()
         losses = []
         for step, batch in enumerate(eval_dataloader):
-            with torch.autocast("cuda" if torch.cuda.is_available() else "cpu"):
-                with torch.no_grad():
-                    outputs = model(**batch)
+            
+            with torch.no_grad():
+                outputs = model(**batch)
             loss = outputs.loss
             losses.append(accelerator.gather_for_metrics(
                 loss.repeat(args.per_device_eval_batch_size)).cpu())
@@ -373,8 +370,7 @@ def main():
         for step, batch in enumerate(train_dataloader):
             # We need to skip steps until we reach the resumed step
             with accelerator.accumulate(model):
-                with torch.autocast("cuda" if torch.cuda.is_available() else "cpu"):
-                    outputs = model(**batch)
+                outputs = model(**batch)
                 lm_loss = outputs.loss
                 
                 kd_loss = 0
