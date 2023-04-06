@@ -436,8 +436,8 @@ def main():
                 )
                 
 
-                    gc.collect()
-                    torch.cuda.empty_cache()
+                gc.collect()
+                torch.cuda.empty_cache()
 
     accelerator.end_training()
 
