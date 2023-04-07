@@ -413,14 +413,6 @@ def get_args():
     )
 
     parser.add_argument(
-        '--student_layer_selection_strategy',
-        type=str,
-        default='uniform',
-        help='Layer selection strategy',
-        choices=['uniform', 'random', 'changes']
-    )
-
-    parser.add_argument(
         '--restart_training',
         action='store_true',
         help='Whether to restart training of all dataset.'
@@ -431,7 +423,7 @@ def get_args():
         type=str,
         default='student',
         help='Part of the model to train.',
-        choices=['student', 'adapter', 'all']
+        choices=['student_patch', 'student', 'adapter', 'all']
     )
     parser.add_argument(
         '--max_grad_norm',
@@ -604,6 +596,8 @@ def get_args():
 def parse_args():
     parser = get_args()
     args = parser.parse_args()
+    if args.train_module == "student_patch":
+        assert args.student_model_name_or_path
     return args
     
 
@@ -739,15 +733,11 @@ def setup_teacher_student(model, args, accelerator):
         student = add_small_student_adapters_to_student(student, model, args, load_student=True)
         student.load_state_dict(student_state_dict)
         if len(student) > args.num_student_layers:
-            if args.student_layer_selection_strategy == 'uniform':
-                # TODO: Think can we downsamlpe twice and double distil to make smaller students
-                student_mid = uniform_choose_layers(student[1:-1], args.num_student_layers-2)
-                student_mid.insert(0, student[0])
-                student_mid.append(student[-1])
-                student = student_mid
-                
-            else:
-                raise NotImplementedError
+            # TODO: Think can we downsamlpe twice and double distil to make smaller students
+            student_mid = uniform_choose_layers(student[1:-1], args.num_student_layers-2)
+            student_mid.insert(0, student[0])
+            student_mid.append(student[-1])
+            student = student_mid
             
     else:
         logger.info(
@@ -756,11 +746,7 @@ def setup_teacher_student(model, args, accelerator):
         t_2_s_ratio = len(layers) // len(student_layers)
         stu_l, stu_r = args.student_l_pad//t_2_s_ratio, len(student_layers) - args.student_r_pad//t_2_s_ratio
         student = deepcopy(student_layers[stu_l:stu_r])
-        if args.student_layer_selection_strategy == 'uniform':
-            # TODO: Think can we downsamlpe twice and double distil to make smaller students
-            student = uniform_choose_layers(student, args.num_student_layers)
-        else:
-            raise NotImplementedError
+        student = uniform_choose_layers(student, args.num_student_layers)
         student = add_small_student_adapters_to_student(student, model, args)
 
     student = student.to(accelerator.device)
