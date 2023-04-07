@@ -132,7 +132,7 @@ def uniform_choose_layers(layers: nn.ModuleList, num_student_layers=None):
 
     student = nn.ModuleList()
     stride = (len(layers) - 1) / (num_student_layers - 1)
-
+    logger.info(f"[uniform_choose_layers]: Number of layers to choose from {len(layers)}, stride = {stride}, layers to be choosen = {[round(i * stride) for i in range(num_student_layers)]}")
     for i in range(num_student_layers):
         idx = round(i * stride)
         logger.info(f"Adding layer {idx} to student")
@@ -379,12 +379,6 @@ def get_args():
         type=int,
         default=200,
     )
-    
-    parser.add_argument(
-        '--small_student_patch_warmup_steps',
-        type=int,
-        default=800,
-    )
 
     parser.add_argument(
         '--num_student_layers',
@@ -598,6 +592,11 @@ def parse_args():
     args = parser.parse_args()
     if args.train_module == "student_patch":
         assert args.student_model_name_or_path
+        assert args.max_train_samples
+        assert args.max_train_steps
+        assert args.num_warmup_steps < 0.5*args.max_train_steps
+    if args.max_train_steps:
+        assert args.num_warmup_steps < 0.5*args.max_train_steps
     return args
     
 
@@ -738,14 +737,14 @@ def setup_teacher_student(model, args, accelerator):
             student_mid.insert(0, student[0])
             student_mid.append(student[-1])
             student = student_mid
-            
+        logger.warn("Load Student with params %s" % {k:"%.5f" % float(v.flatten()[0]) for k, v in student.state_dict().items()})
     else:
-        logger.info(
-            f"Training new student with {args.num_student_layers} layers")
         assert args.student_l_pad + args.student_r_pad < len(student_layers)
         t_2_s_ratio = len(layers) // len(student_layers)
         stu_l, stu_r = args.student_l_pad//t_2_s_ratio, len(student_layers) - args.student_r_pad//t_2_s_ratio
         student = deepcopy(student_layers[stu_l:stu_r])
+        logger.info(
+            f"Training new student with {args.num_student_layers} layers, Teacher to student layer ratio = {t_2_s_ratio}, student start, end = {stu_l}, {stu_r}")
         student = uniform_choose_layers(student, args.num_student_layers)
         student = add_small_student_adapters_to_student(student, model, args)
 
@@ -761,7 +760,16 @@ def setup_teacher_student(model, args, accelerator):
             f"Quantizing student module with {args.weight_quantization_bits} bits")
         quantize(student, args.weight_quantization_bits)
 
-    if args.train_module == 'student':
+    if args.train_module == 'student_patch':
+        for param in student.parameters():
+            param.requires_grad = False
+        for param in student[0].parameters():
+            param.requires_grad = True
+            param.data = param.data.float()
+        for param in student[-1].parameters():
+            param.requires_grad = True
+            param.data = param.data.float()
+    elif args.train_module == 'student':
         for param in student.parameters():
             param.data = param.data.float()
             param.requires_grad = True
@@ -805,7 +813,9 @@ def setup_teacher_student(model, args, accelerator):
     num_student_layers = len(model.student)
     logger.info(f"Number of student layers: {num_student_layers}")
 
-    if args.train_module == 'student':
+    if args.train_module == 'student_patch':
+        model.trainable_module = nn.ModuleList([student[0], student[-1]])
+    elif args.train_module == 'student':
         model.trainable_module = model.student
     elif args.train_module == 'adapter':
         model.trainable_module = model.adapter

@@ -163,9 +163,9 @@ def main():
     accelerator_log_kwargs = {}
 
     accelerator_log_kwargs["log_with"] = args.report_to
-    accelerator_log_kwargs["logging_dir"] = args.output_dir
+    accelerator_log_kwargs["project_dir"] = args.output_dir
 
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=False)
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps, kwargs_handlers=[ddp_kwargs], **accelerator_log_kwargs)
 
@@ -189,7 +189,7 @@ def main():
     logger.info(accelerator.state, main_process_only=False)
     if accelerator.is_local_main_process:
         datasets.utils.logging.set_verbosity_warning()
-        transformers.utils.logging.set_verbosity_info()
+        transformers.utils.logging.set_verbosity_warning()
     else:
         datasets.utils.logging.set_verbosity_error()
         transformers.utils.logging.set_verbosity_error()
@@ -274,9 +274,11 @@ def main():
 
     trainable_params = sum(p.numel()
                            for p in model.parameters() if p.requires_grad)
+    total_params = sum(p.numel()
+                           for p in model.parameters())
 
-    logger.info(f"Number of trainable parameters: {trainable_params}")
-
+    logger.info(f"Number of trainable parameters: {trainable_params/(1024*1024)} Million, Total Parameter = {total_params/(1024*1024)}")
+    
     for name, param in model.named_parameters():
         if param.requires_grad:
             logger.info(
@@ -328,17 +330,7 @@ def main():
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
 
-    lr_scheduler = get_scheduler(
-        name=args.lr_scheduler_type,
-        optimizer=optimizer,
-        num_warmup_steps=args.num_warmup_steps * args.gradient_accumulation_steps,
-        num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
-    )
-
-    # Prepare everything with our `accelerator`.
-    model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
-        model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
-    )
+    
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(
@@ -357,29 +349,33 @@ def main():
     accelerator.init_trackers("offsite_tuning", experiment_config)
 
     # Train!
-    total_batch_size = args.per_device_train_batch_size * \
-        accelerator.num_processes * args.gradient_accumulation_steps
+    total_batch_size = args.per_device_train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
-    logger.info("***** Running training *****")
-    logger.info(f"  Num Epochs = {args.num_train_epochs}")
+    logger.info("********** Running training **********")
+    logger.info(f"  Num Epochs = {args.num_train_epochs}, Total optimization steps = {args.max_train_steps}, Gradient Accumulation steps = {args.gradient_accumulation_steps}, Update Steps per epoch = {num_update_steps_per_epoch}")
     logger.info(
-        f"  Instantaneous batch size per device = {args.per_device_train_batch_size}")
-    logger.info(
-        f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
-    logger.info(
-        f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
-    logger.info(f"  Total optimization steps = {args.max_train_steps}")
+        f"  Instantaneous batch size per device = {args.per_device_train_batch_size}, Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
+    logger.info("********** Running training **********")
 
+    lr_scheduler = get_scheduler(
+        name=args.lr_scheduler_type,
+        optimizer=optimizer,
+        num_warmup_steps=args.num_warmup_steps * args.gradient_accumulation_steps,
+        num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
+    )
+
+    # Prepare everything with our `accelerator`.
+    model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
+        model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
+    )
     def eval_epoch():
-        model.eval()
         losses = []
-        for step, batch in enumerate(eval_dataloader):
-            with torch.autocast("cuda" if torch.cuda.is_available() else "cpu"):
-                with torch.no_grad():
+        with torch.no_grad():
+            for step, batch in enumerate(eval_dataloader):
+                with torch.autocast("cuda" if torch.cuda.is_available() else "cpu"):
                     outputs = model(**batch)
-            loss = outputs.loss
-            losses.append(accelerator.gather_for_metrics(
-                loss.repeat(args.per_device_eval_batch_size)).cpu())
+                loss = outputs.loss
+                losses.append(accelerator.gather_for_metrics(loss.repeat(args.per_device_eval_batch_size)).cpu())
         losses = torch.cat(losses).flatten()
         # filter out nan
         losses = losses[~torch.isnan(losses)]
@@ -393,6 +389,7 @@ def main():
 
     if not args.no_teacher:
         to_teacher(model.module if hasattr(model, "module") else model, args)
+        model.eval()
         _, teacher_zero_shot_perplexity = eval_epoch()
         logger.info(
             f"Teacher zero shot perplexity: {teacher_zero_shot_perplexity}")
@@ -405,7 +402,9 @@ def main():
     #     logger.info(
     #         f"Parameter: {name} with shape {param.shape}, dtype {param.dtype}, and requires_grad {param.requires_grad}")
 
+    model.eval()
     _, student_zero_shot_perplexity = eval_epoch()
+    model.train()
     logger.info(
         f"Student zero shot perplexity: {student_zero_shot_perplexity}")
     best_perplexity = float("inf")
@@ -416,21 +415,13 @@ def main():
 
     completed_steps = 0
     last_save_state = -1
-
+    training_stop_flag = False
+    is_saved = False
     # update the progress_bar if load from checkpoint
     progress_bar.update(starting_epoch * num_update_steps_per_epoch)
     completed_steps = starting_epoch * num_update_steps_per_epoch
-    small_student_patch_warmup_steps_completed = False
     for epoch in range(starting_epoch, args.num_train_epochs):
         model.train()
-        if args.student_model_name_or_path and args.num_train_epochs > 1 and not args.load_student and args.small_student_patch_warmup_steps > 0 and not small_student_patch_warmup_steps_completed:
-            student = (model.module if hasattr(model, "module") else model).student
-            for param in student.parameters():
-                param.requires_grad = False
-            for param in student[0].parameters():
-                param.requires_grad = True
-            for param in student[-1].parameters():
-                param.requires_grad = True
         total_lm_loss, total_kd_loss = 0, 0
         interval_lm_loss, interval_kd_loss = 0, 0
         best_lm_loss, best_kd_loss = float("inf"), float("inf")
@@ -444,15 +435,7 @@ def main():
                 completed_steps += 1
                 skipped_steps += 1
                 continue
-            
-            if completed_steps >= args.small_student_patch_warmup_steps and args.student_model_name_or_path and not args.load_student and not small_student_patch_warmup_steps_completed:
-                small_student_patch_warmup_steps_completed = True
-                logger.info(
-                    f"epoch {epoch} step {completed_steps}: student_ppl: {perplexity:.4f} plug_ppl: {plug_ppl:.4f} lm_loss: {lm_loss:.4f} kd_loss: {kd_loss:.4f} \nCompleted Warmup for Small Student Patch.")
-                for param in (model.module if hasattr(model, "module") else model).student.parameters():
-                    param.requires_grad = True
-                
-            
+
             with accelerator.accumulate(model):
                 with torch.autocast("cuda" if torch.cuda.is_available() else "cpu"):
                     outputs = model(**batch)
@@ -478,58 +461,75 @@ def main():
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
-                    accelerator.clip_grad_norm_(
-                        model.parameters(), args.max_grad_norm)
+                    accelerator.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                 optimizer.step()
-                lr_scheduler.step()
+                if not accelerator.optimizer_step_was_skipped:
+                    lr_scheduler.step()
                 optimizer.zero_grad()
-            # end accumulate gradients
+                # end accumulate gradients
 
-            # Checks if the accelerator has performed an optimization step behind the scenes
-            if accelerator.sync_gradients:
-                progress_bar.update(1)
-                completed_steps += 1
-            else:
-                continue
-
-            if (completed_steps % args.eval_steps == 0) or (completed_steps == args.small_student_patch_warmup_steps and small_student_patch_warmup_steps_completed):
-                if not args.no_teacher:
-                    to_teacher(model.module if hasattr(model, "module") else model, args)
-                    plug_eval_loss, plug_ppl = eval_epoch()
+                # Checks if the accelerator has performed an optimization step behind the scenes
+                if accelerator.sync_gradients and not accelerator.optimizer_step_was_skipped:
+                    progress_bar.update(1)
+                    completed_steps += 1
                 else:
-                    plug_eval_loss, plug_ppl = 0, 0
-                to_student(model.module if hasattr(model, "module") else model, args)
-                eval_loss, perplexity = eval_epoch()
+                    continue
 
+            if (completed_steps % args.eval_steps == 0):
+                logger.info(
+                    f"epoch {epoch} dataloader step = {step} completed step {completed_steps}, accumulation steps = {accelerator.gradient_accumulation_steps}")
+                # if not args.no_teacher:
+                #     to_teacher(model.module if hasattr(model, "module") else model, args)
+                #     plug_eval_loss, plug_ppl = eval_epoch()
+                # else:
+                #     plug_eval_loss, plug_ppl = 0, 0
+                # to_student(model.module if hasattr(model, "module") else model, args)
+                # eval_loss, perplexity = eval_epoch()
+                # model.train()
+                eval_loss, perplexity = 0, 0
+                plug_eval_loss, plug_ppl = 0, 0
                 lm_loss = interval_lm_loss / args.eval_steps
                 kd_loss = interval_kd_loss / args.eval_steps
                 interval_lm_loss = 0
                 interval_kd_loss = 0
 
                 logger.info(
-                    f"epoch {epoch} step {completed_steps}: student_ppl: {perplexity:.4f} plug_ppl: {plug_ppl:.4f} lm_loss: {lm_loss:.4f} kd_loss: {kd_loss:.4f}")
+                    f"epoch {epoch} dataloader step = {step} completed step {completed_steps}: student_ppl: {perplexity:.4f} plug_ppl: {plug_ppl:.4f} lm_loss: {lm_loss:.4f} kd_loss: {kd_loss:.4f}")
 
                 accelerator.log(
                     {
                         "student_ppl": perplexity,
                         "student_eval_loss": eval_loss,
-                        "plug_ppl": plug_ppl,
-                        "plug_eval_loss": plug_eval_loss,
+                        "teacher_ppl": plug_ppl,
+                        "teacher_eval_loss": plug_eval_loss,
                         "ppl_gap": perplexity - plug_ppl,
                         "train_lm_loss": lm_loss,
                         "train_kd_loss": kd_loss,
                         "epoch": epoch,
                         "step": completed_steps,
+                        "lr": optimizer.param_groups[0]['lr'],
                     },
                     step=completed_steps,
                 )
                 is_best = perplexity < best_perplexity
                 best_perplexity = min(best_perplexity, perplexity)
+                if is_best and accelerator.is_main_process and (completed_steps > 0.1 * args.max_train_steps and (completed_steps > last_save_state + 100 or completed_steps >= args.max_train_steps-100)):
+                    with open(os.path.join(args.output_dir, "all_results.json"), "w+") as f:
+                        json.dump({"best_perplexity": best_perplexity,
+                                   "plug_perplexity": plug_ppl,
+                                   "teacher_zero_shot_perplexity": teacher_zero_shot_perplexity,
+                                   "student_zero_shot_perplexity": student_zero_shot_perplexity,
+                                   "train_lm_loss": lm_loss,
+                                   "train_kd_loss": kd_loss,
+                                   "epoch": epoch,
+                                   "step": completed_steps,
+                                   "trainable_params": trainable_params}, f)
 
-                if not args.no_save_model and is_best and accelerator.is_main_process and (completed_steps > 0.1 * args.max_train_steps and completed_steps > last_save_state + 100):
+                if not args.no_save_model and is_best and accelerator.is_main_process and (completed_steps > 0.1 * args.max_train_steps and (completed_steps > last_save_state + 100 or completed_steps >= args.max_train_steps-100)):
                     last_save_state = completed_steps
-                    logger.info(f"Saving Model = {args.save_module} at {args.output_dir}")
                     unwrapped_model = accelerator.unwrap_model(model)
+                    logger.info(f"Saving Model = {args.save_module} at {args.output_dir}")
+                    is_saved = True
                     if args.save_module in ["student", "all"]:
                         state_dict = unwrapped_model.student.state_dict()
                         save_state_dict(
@@ -541,18 +541,14 @@ def main():
 
                     gc.collect()
                     torch.cuda.empty_cache()
+            if completed_steps >= args.max_train_steps:
+                training_stop_flag = True
+                if accelerator.is_main_process and is_saved:
+                    logger.warn(f"Save at step {completed_steps} with params %s" % {k:"%.5f" % float(v.flatten()[0]) for k, v in state_dict.items()})
+                break
 
-                if is_best and accelerator.is_main_process and (completed_steps > 0.1 * args.max_train_steps and completed_steps > last_save_state + 100):
-                    with open(os.path.join(args.output_dir, "all_results.json"), "w+") as f:
-                        json.dump({"best_perplexity": best_perplexity,
-                                   "plug_perplexity": plug_ppl,
-                                   "teacher_zero_shot_perplexity": teacher_zero_shot_perplexity,
-                                   "student_zero_shot_perplexity": student_zero_shot_perplexity,
-                                   "train_lm_loss": lm_loss,
-                                   "train_kd_loss": kd_loss,
-                                   "epoch": epoch,
-                                   "step": completed_steps,
-                                   "trainable_params": trainable_params}, f)
+        if training_stop_flag:
+            break
 
     accelerator.end_training()
 
