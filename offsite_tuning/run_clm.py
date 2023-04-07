@@ -305,7 +305,7 @@ def main():
         model.resize_token_embeddings(len(tokenizer))
 
     
-
+    model = accelerator.prepare(model)
     # Optimizer
     # Split weights in two groups, one with weight decay and the other not.
     no_decay = ["bias", "layer_norm.weight"]
@@ -365,8 +365,8 @@ def main():
     )
 
     # Prepare everything with our `accelerator`.
-    model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
-        model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
+    optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
+        optimizer, train_dataloader, eval_dataloader, lr_scheduler
     )
     def eval_epoch():
         losses = []
@@ -478,12 +478,12 @@ def main():
             if (completed_steps % args.eval_steps == 0):
                 logger.info(
                     f"epoch {epoch} dataloader step = {step} completed step {completed_steps}, accumulation steps = {accelerator.gradient_accumulation_steps}")
-                # if not args.no_teacher:
-                #     to_teacher(model.module if hasattr(model, "module") else model, args)
+                if not args.no_teacher:
+                    to_teacher(model.module if hasattr(model, "module") else model, args)
                 #     plug_eval_loss, plug_ppl = eval_epoch()
-                # else:
-                #     plug_eval_loss, plug_ppl = 0, 0
-                # to_student(model.module if hasattr(model, "module") else model, args)
+                else:
+                    plug_eval_loss, plug_ppl = 0, 0
+                to_student(model.module if hasattr(model, "module") else model, args)
                 # eval_loss, perplexity = eval_epoch()
                 # model.train()
                 eval_loss, perplexity = 0, 0
