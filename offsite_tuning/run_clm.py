@@ -415,6 +415,7 @@ def main():
                         disable=not accelerator.is_local_main_process)
 
     completed_steps = 0
+    last_save_state = -1
 
     # update the progress_bar if load from checkpoint
     progress_bar.update(starting_epoch * num_update_steps_per_epoch)
@@ -525,7 +526,9 @@ def main():
                 is_best = perplexity < best_perplexity
                 best_perplexity = min(best_perplexity, perplexity)
 
-                if not args.no_save_model and is_best and accelerator.is_main_process:
+                if not args.no_save_model and is_best and accelerator.is_main_process and (completed_steps > 0.1 * args.max_train_steps and completed_steps > last_save_state + 100):
+                    last_save_state = completed_steps
+                    logger.info(f"Saving Model = {args.save_module} at {args.output_dir}")
                     unwrapped_model = accelerator.unwrap_model(model)
                     if args.save_module in ["student", "all"]:
                         state_dict = unwrapped_model.student.state_dict()
@@ -539,7 +542,7 @@ def main():
                     gc.collect()
                     torch.cuda.empty_cache()
 
-                if is_best and accelerator.is_main_process:
+                if is_best and accelerator.is_main_process and (completed_steps > 0.1 * args.max_train_steps and completed_steps > last_save_state + 100):
                     with open(os.path.join(args.output_dir, "all_results.json"), "w+") as f:
                         json.dump({"best_perplexity": best_perplexity,
                                    "plug_perplexity": plug_ppl,
