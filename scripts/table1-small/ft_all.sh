@@ -7,7 +7,7 @@ eval_steps=$6         # 10
 
 ### baseline ft
 CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" accelerate launch \
-    --mixed_precision=fp16 --multi_gpu \
+    --mixed_precision=fp16 --zero_stage 3 --offload_optimizer_device "cpu" --offload_param_device "cpu" --zero3_init_flag true  \
     offsite_tuning/run_clm.py \
     --model_name_or_path $MODEL \
     --dataset_name ${TASK} \
@@ -18,6 +18,7 @@ CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" accelerate launch \
     --lm_weight 1.0 \
     --kd_weight 0.0 \
     --seed 42 \
+    --gradient_accumulation_steps 4 \
     --eval_steps $eval_steps \
     --train_module all \
     --save_module all \

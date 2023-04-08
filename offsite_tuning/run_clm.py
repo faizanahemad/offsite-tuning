@@ -43,6 +43,7 @@ import transformers
 from transformers.models.gpt2.modeling_gpt2 import GPT2LMHeadModel, GPT2Model
 from transformers.models.opt.modeling_opt import OPTForCausalLM, OPTModel
 from transformers.models.bloom.modeling_bloom import BloomForCausalLM, BloomModel
+from accelerate.utils import DummyOptim, DummyScheduler
 
 from accelerate import Accelerator, DistributedType
 from accelerate import DistributedDataParallelKwargs
@@ -281,13 +282,13 @@ def main():
     
     for name, param in model.named_parameters():
         if param.requires_grad:
-            logger.info(
+            logger.debug(
                 f"Trainable parameter: {name} with shape {param.shape} and dtype {param.dtype}")
     # print(model)
     # print(tokenizer.model_max_length)
     # print_code(model.__call__)
     # print_code(model.forward)
-    
+
     train_dataloader, eval_dataloader = get_dataloaders(args, tokenizer, accelerator)
     if args.load_student and not args.restart_training:
         results_dir = args.load_student if os.path.isdir(args.load_student) else os.path.dirname(args.load_student)
@@ -299,13 +300,16 @@ def main():
     else:
         starting_epoch = 0
         resume_step = -1
-    
+
     embedding_size = model.get_input_embeddings().weight.shape[0]
     if len(tokenizer) > embedding_size:
         model.resize_token_embeddings(len(tokenizer))
 
-    
-    model = accelerator.prepare(model)
+    if accelerator.state.deepspeed_plugin:
+        logger.info(f"deep speed state = {accelerator.state.deepspeed_plugin} and deep speed config = {str(accelerator.state.deepspeed_plugin.deepspeed_config)}")
+        accelerator.state.deepspeed_plugin.deepspeed_config['train_micro_batch_size_per_gpu'] = args.per_device_train_batch_size
+    else:
+        model = accelerator.prepare(model)
     # Optimizer
     # Split weights in two groups, one with weight decay and the other not.
     no_decay = ["bias", "layer_norm.weight"]
@@ -319,7 +323,17 @@ def main():
             "weight_decay": 0.0,
         },
     ]
-    optimizer = torch.optim.AdamW(
+    opt_cond = accelerator.state.deepspeed_plugin is None \
+    or "optimizer" not in accelerator.state.deepspeed_plugin.deepspeed_config \
+    or accelerator.state.deepspeed_plugin.deepspeed_config["zero_stage"] != 3
+    
+    optimizer_cls = (
+        torch.optim.AdamW
+        if opt_cond
+        else DummyOptim
+     )
+    logger.warning(f"Optimiser class = {optimizer_cls}, opt_cond = {opt_cond}")
+    optimizer = optimizer_cls(
         optimizer_grouped_parameters, lr=args.learning_rate)
 
     # Scheduler and math around the number of training steps.
@@ -357,17 +371,31 @@ def main():
         f"  Instantaneous batch size per device = {args.per_device_train_batch_size}, Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
     logger.info("********** Running training **********")
 
-    lr_scheduler = get_scheduler(
-        name=args.lr_scheduler_type,
-        optimizer=optimizer,
-        num_warmup_steps=args.num_warmup_steps * args.gradient_accumulation_steps,
-        num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
-    )
+    if (
+        accelerator.state.deepspeed_plugin is None
+        or "scheduler" not in accelerator.state.deepspeed_plugin.deepspeed_config
+        or accelerator.state.deepspeed_plugin.deepspeed_config["zero_stage"] != 3
+     ):
+        lr_scheduler = get_scheduler(
+            name=args.lr_scheduler_type,
+            optimizer=optimizer,
+            num_warmup_steps=args.num_warmup_steps * args.gradient_accumulation_steps,
+            num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
+        )
+    else:
+        lr_scheduler = DummyScheduler(
+             optimizer, total_num_steps=args.max_train_steps, warmup_num_steps=args.num_warmup_steps
+         )
 
     # Prepare everything with our `accelerator`.
-    optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
-        optimizer, train_dataloader, eval_dataloader, lr_scheduler
-    )
+    if accelerator.state.deepspeed_plugin:
+        model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
+            model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
+        )
+    else:
+        optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
+            optimizer, train_dataloader, eval_dataloader, lr_scheduler
+        )
     def eval_epoch():
         model.eval()
         losses = []

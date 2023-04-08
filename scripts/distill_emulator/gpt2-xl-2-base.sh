@@ -1,5 +1,5 @@
 # l25
-MODEL="gpt2-large"
+MODEL="gpt2-xl"
 student_model_name_or_path="gpt2"
 num_student_layers=6
 bs=2
@@ -11,7 +11,7 @@ export WANDB_NAME="${MODEL}_emulator_${num_student_layers}_${pad}_${pad}"
 export WANDB_MODE="dryrun"
 export WANDB_DISABLE_SERVICE=true
 CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" accelerate launch \
-    --mixed_precision=fp16 --multi_gpu\
+    --mixed_precision=fp16 \
     offsite_tuning/run_clm.py \
     --model_name_or_path $MODEL \
     --train_tokenized_dataset $HOME/processed_datasets/wikitext_tokenized_blocks \
@@ -41,7 +41,7 @@ CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" accelerate launch \
     --student_model_name_or_path $student_model_name_or_path
 
 CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" accelerate launch \
-    --mixed_precision=fp16 --multi_gpu\
+    --mixed_precision=fp16 \
     offsite_tuning/run_clm.py \
     --model_name_or_path $MODEL \
     --train_tokenized_dataset $HOME/processed_datasets/wikitext_tokenized_blocks \
