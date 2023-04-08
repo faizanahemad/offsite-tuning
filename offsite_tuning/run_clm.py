@@ -369,6 +369,7 @@ def main():
         optimizer, train_dataloader, eval_dataloader, lr_scheduler
     )
     def eval_epoch():
+        model.eval()
         losses = []
         with torch.no_grad():
             for step, batch in enumerate(eval_dataloader):
@@ -420,6 +421,8 @@ def main():
     # update the progress_bar if load from checkpoint
     progress_bar.update(starting_epoch * num_update_steps_per_epoch)
     completed_steps = starting_epoch * num_update_steps_per_epoch
+    gradient_accumulation_steps = accelerator.gradient_accumulation_steps
+    total_non_accum_steps = 0
     for epoch in range(starting_epoch, args.num_train_epochs):
         model.train()
         total_lm_loss, total_kd_loss = 0, 0
@@ -427,6 +430,7 @@ def main():
         best_lm_loss, best_kd_loss = float("inf"), float("inf")
         skipped_steps = 0
         for step, batch in enumerate(train_dataloader):
+            total_non_accum_steps += 1
             # We need to skip steps until we reach the resumed step
             if args.load_student and epoch == starting_epoch and step <= resume_step:
                 progress_bar.update(1)
@@ -435,10 +439,26 @@ def main():
                 completed_steps += 1
                 skipped_steps += 1
                 continue
+            
+            if total_non_accum_steps % gradient_accumulation_steps != 0:
+                # logger.error(f"No Sync IF step = {step}, total_non_accum_steps={total_non_accum_steps}")
+                with accelerator.no_sync(model):
+                    with torch.autocast("cuda" if torch.cuda.is_available() else "cpu"):
+                        outputs = model(**batch)
+                    # logger.error(f"No Sync Context step = {step}, total_non_accum_steps={total_non_accum_steps}")
+                    lm_loss = outputs.loss
+                    if not args.no_teacher:
+                        kd_loss = get_kd_loss(model.module if hasattr(model, "module") else model)
+                    else:
+                        kd_loss = 0
 
-            with accelerator.accumulate(model):
+                    loss = args.lm_weight * lm_loss + args.kd_weight * \
+                        kd_loss if args.kd_weight != 0 else lm_loss
+                    accelerator.backward(loss)
+            else:
                 with torch.autocast("cuda" if torch.cuda.is_available() else "cpu"):
-                    outputs = model(**batch)
+                        outputs = model(**batch)
+                # logger.error(f"Sync else step = {step}, total_non_accum_steps={total_non_accum_steps}")
                 lm_loss = outputs.loss
                 if not args.no_teacher:
                     kd_loss = get_kd_loss(model.module if hasattr(model, "module") else model)
@@ -447,47 +467,37 @@ def main():
 
                 loss = args.lm_weight * lm_loss + args.kd_weight * \
                     kd_loss if args.kd_weight != 0 else lm_loss
-                progress_bar.set_description(
-                    f"Epoch {epoch} - Step {step} - LR: {optimizer.param_groups[0]['lr']:.2e} - LM loss: {lm_loss:.4f} - KD loss: {kd_loss:.4f}")
-
-                total_lm_loss += lm_loss.item()
-                interval_lm_loss += lm_loss.item()
-                best_lm_loss = min(best_lm_loss, lm_loss.item())
-
-                if not args.no_teacher:
-                    total_kd_loss += kd_loss.item()
-                    interval_kd_loss += kd_loss.item()
-                    best_kd_loss = min(best_kd_loss, kd_loss.item())
-
                 accelerator.backward(loss)
-                if accelerator.sync_gradients:
-                    accelerator.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                accelerator.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                 optimizer.step()
                 if not accelerator.optimizer_step_was_skipped:
                     lr_scheduler.step()
                 optimizer.zero_grad()
-                # end accumulate gradients
+                progress_bar.update(1)
+                completed_steps += 1
+                
+            total_lm_loss += lm_loss.item()
+            interval_lm_loss += lm_loss.item()
+            best_lm_loss = min(best_lm_loss, lm_loss.item())
+            if not args.no_teacher:
+                total_kd_loss += kd_loss.item()
+                interval_kd_loss += kd_loss.item()
+                best_kd_loss = min(best_kd_loss, kd_loss.item())
+            progress_bar.set_description(
+                    f"Epoch {epoch} - Step {step} - LR: {optimizer.param_groups[0]['lr']:.2e} - LM loss: {lm_loss:.4f} - KD loss: {kd_loss:.4f}")  
 
-                # Checks if the accelerator has performed an optimization step behind the scenes
-                if accelerator.sync_gradients and not accelerator.optimizer_step_was_skipped:
-                    progress_bar.update(1)
-                    completed_steps += 1
-                else:
-                    continue
 
             if (completed_steps % args.eval_steps == 0):
                 logger.info(
                     f"epoch {epoch} dataloader step = {step} completed step {completed_steps}, accumulation steps = {accelerator.gradient_accumulation_steps}")
                 if not args.no_teacher:
                     to_teacher(model.module if hasattr(model, "module") else model, args)
-                #     plug_eval_loss, plug_ppl = eval_epoch()
+                    plug_eval_loss, plug_ppl = eval_epoch()
                 else:
                     plug_eval_loss, plug_ppl = 0, 0
                 to_student(model.module if hasattr(model, "module") else model, args)
-                # eval_loss, perplexity = eval_epoch()
-                # model.train()
-                eval_loss, perplexity = 0, 0
-                plug_eval_loss, plug_ppl = 0, 0
+                eval_loss, perplexity = eval_epoch()
+                model.train()
                 lm_loss = interval_lm_loss / args.eval_steps
                 kd_loss = interval_kd_loss / args.eval_steps
                 interval_lm_loss = 0
@@ -531,6 +541,7 @@ def main():
                     logger.info(f"Saving Model = {args.save_module} at {args.output_dir}")
                     is_saved = True
                     if args.save_module in ["student", "all"]:
+                        logger.info(f"Saving Model = {args.save_module} at {args.output_dir} with total layers = {len(unwrapped_model.student)}")
                         state_dict = unwrapped_model.student.state_dict()
                         save_state_dict(
                             state_dict, args.output_dir, "student.pt")

@@ -199,7 +199,7 @@ def get_args():
         "--model_name_or_path",
         type=str,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
-        required=False,
+        required=True,
     )
     parser.add_argument(
         "--student_model_name_or_path",
@@ -597,6 +597,10 @@ def parse_args():
         assert args.num_warmup_steps < 0.5*args.max_train_steps
     if args.max_train_steps:
         assert args.num_warmup_steps < 0.5*args.max_train_steps
+        
+    if args.student_model_name_or_path:
+        assert args.student_model_name_or_path != args.model_name_or_path
+        assert args.student_model_name_or_path.split("/")[-1] != args.model_name_or_path.split("/")[-1]
     return args
     
 
@@ -721,22 +725,23 @@ def setup_teacher_student(model, args, accelerator):
     if args.load_student:
         student_path = args.load_student if os.path.isfile(args.load_student) else os.path.join(args.load_student, "student.pt")
         assert os.path.isfile(student_path)
-        logger.info(
-            f"Loading student module from {student_path}")
         student_state_dict = torch.load(student_path, map_location='cpu')
         student_layers_len = len(
             set([k.split('.')[0] for k in student_state_dict.keys()]))
-        logger.info(
-            f"Loading student module from {student_path} with {student_layers_len} layers.")
         student = deepcopy(student_layers[:student_layers_len])
         student = add_small_student_adapters_to_student(student, model, args, load_student=True)
+        logger.info(
+            f"Loading student module from {student_path} with {student_layers_len} layers, student length = {len(student)}.")
         student.load_state_dict(student_state_dict)
         if len(student) > args.num_student_layers:
             # TODO: Think can we downsamlpe twice and double distil to make smaller students
-            student_mid = uniform_choose_layers(student[1:-1], args.num_student_layers-2)
-            student_mid.insert(0, student[0])
-            student_mid.append(student[-1])
-            student = student_mid
+            if args.student_model_name_or_path:
+                student_mid = uniform_choose_layers(student[1:-1], args.num_student_layers-2)
+                student_mid.insert(0, student[0])
+                student_mid.append(student[-1])
+                student = student_mid
+            else:
+                student = uniform_choose_layers(student, args.num_student_layers)
         logger.warn("Load Student with params %s" % {k:"%.5f" % float(v.flatten()[0]) for k, v in student.state_dict().items()})
     else:
         assert args.student_l_pad + args.student_r_pad < len(student_layers)
@@ -745,7 +750,10 @@ def setup_teacher_student(model, args, accelerator):
         student = deepcopy(student_layers[stu_l:stu_r])
         logger.info(
             f"Training new student with {args.num_student_layers} layers, Teacher to student layer ratio = {t_2_s_ratio}, student start, end = {stu_l}, {stu_r}")
-        student = uniform_choose_layers(student, args.num_student_layers)
+        if args.student_model_name_or_path:
+            student = uniform_choose_layers(student, args.num_student_layers - 2)
+        else:
+            student = uniform_choose_layers(student, args.num_student_layers)
         student = add_small_student_adapters_to_student(student, model, args)
 
     student = student.to(accelerator.device)

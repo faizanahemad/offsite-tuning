@@ -34,7 +34,7 @@ CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" accelerate launch \
     --student_l_pad $pad \
     --student_r_pad $pad \
     --train_module "student_patch" \
-    --max_train_steps 1000 \
+    --max_train_steps 1200 \
     --max_train_samples 100000 \
     --output_dir emulators/${MODEL}/${num_student_layers}_${pad}_${pad} \
     --report_to wandb \
