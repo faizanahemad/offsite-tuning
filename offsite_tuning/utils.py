@@ -592,7 +592,6 @@ def parse_args():
     args = parser.parse_args()
     if args.train_module == "student_patch":
         assert args.student_model_name_or_path
-        assert args.max_train_samples
         assert args.max_train_steps
         assert args.num_warmup_steps < 0.5*args.max_train_steps
     if args.max_train_steps:

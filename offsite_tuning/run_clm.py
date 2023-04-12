@@ -292,11 +292,15 @@ def main():
     train_dataloader, eval_dataloader = get_dataloaders(args, tokenizer, accelerator)
     if args.load_student and not args.restart_training:
         results_dir = args.load_student if os.path.isdir(args.load_student) else os.path.dirname(args.load_student)
-        base_results = json.load(
-            open(os.path.join(results_dir, 'all_results.json'), 'r'))
-        starting_epoch = base_results['epoch']
-        resume_step = base_results['step'] - \
-            starting_epoch * len(train_dataloader)
+        if os.path.exists(os.path.join(results_dir, 'all_results.json')):
+            base_results = json.load(
+                open(os.path.join(results_dir, 'all_results.json'), 'r'))
+            starting_epoch = base_results['epoch']
+            resume_step = base_results['step'] - \
+                starting_epoch * len(train_dataloader)
+        else:
+            starting_epoch = 0
+            resume_step = -1
     else:
         starting_epoch = 0
         resume_step = -1
@@ -304,6 +308,7 @@ def main():
     embedding_size = model.get_input_embeddings().weight.shape[0]
     if len(tokenizer) > embedding_size:
         model.resize_token_embeddings(len(tokenizer))
+    
 
     if accelerator.state.deepspeed_plugin:
         logger.info(f"deep speed state = {accelerator.state.deepspeed_plugin} and deep speed config = {str(accelerator.state.deepspeed_plugin.deepspeed_config)}")
@@ -315,11 +320,11 @@ def main():
     no_decay = ["bias", "layer_norm.weight"]
     optimizer_grouped_parameters = [
         {
-            "params": [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
+            "params": [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay) and p.requires_grad],
             "weight_decay": args.weight_decay,
         },
         {
-            "params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)],
+            "params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay) and p.requires_grad],
             "weight_decay": 0.0,
         },
     ]
