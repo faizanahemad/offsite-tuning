@@ -167,8 +167,12 @@ def main():
     accelerator_log_kwargs["project_dir"] = args.output_dir
 
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=False)
+    if args.fsdp:
+        fsdp_params = FullyShardedDataParallelPlugin(use_orig_params=True)
+    else:
+        fsdp_params = None
     accelerator = Accelerator(
-        gradient_accumulation_steps=args.gradient_accumulation_steps, kwargs_handlers=[ddp_kwargs], **accelerator_log_kwargs)
+        gradient_accumulation_steps=args.gradient_accumulation_steps, fsdp_plugin=fsdp_params, kwargs_handlers=[ddp_kwargs], **accelerator_log_kwargs)
 
     # Handle the repository creation
     if accelerator.is_main_process:
@@ -272,7 +276,22 @@ def main():
 
     if args.use_bitfit:
         use_bitfit(model.trainable_module)
-
+        
+    if args.gradient_checkpointing_enable:
+        assert (hasattr(accelerator.state, "deepspeed_plugin") and accelerator.state.deepspeed_plugin is None) or not hasattr(accelerator.state, "deepspeed_plugin")
+        # assert (hasattr(accelerator.state, "fsdp_plugin") and accelerator.state.fsdp_plugin is None) or not hasattr(accelerator.state, "fsdp_plugin")
+        pre = model.transformer.get_input_embeddings().requires_grad_
+        model.enable_input_require_grads()
+        model.gradient_checkpointing_enable()
+        post = model.transformer.get_input_embeddings().requires_grad_
+        logger.info(f"Pre grad = {pre}, post grad = {post}")
+        if pre!=post:
+            raise ValueError
+        
+        
+    if hasattr(accelerator.state, "fsdp_plugin") and accelerator.state.fsdp_plugin:
+        logger.info(f"FSDP speed state = {accelerator.state.fsdp_plugin} and FSDP speed config = {str(accelerator.state.fsdp_plugin)}")
+    
     trainable_params = sum(p.numel()
                            for p in model.parameters() if p.requires_grad)
     total_params = sum(p.numel()
@@ -280,15 +299,7 @@ def main():
 
     logger.info(f"Number of trainable parameters: {trainable_params/(1024*1024)} Million, Total Parameter = {total_params/(1024*1024)}")
     
-    for name, param in model.named_parameters():
-        if param.requires_grad:
-            logger.debug(
-                f"Trainable parameter: {name} with shape {param.shape} and dtype {param.dtype}")
-    # print(model)
-    # print(tokenizer.model_max_length)
-    # print_code(model.__call__)
-    # print_code(model.forward)
-
+    
     train_dataloader, eval_dataloader = get_dataloaders(args, tokenizer, accelerator)
     if args.load_student and not args.restart_training:
         results_dir = args.load_student if os.path.isdir(args.load_student) else os.path.dirname(args.load_student)
@@ -401,6 +412,13 @@ def main():
         optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
             optimizer, train_dataloader, eval_dataloader, lr_scheduler
         )
+        
+    # We need to recalculate our total training steps as the size of the training dataloader may have changed.
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
+    if overrode_max_train_steps:
+        args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
+    # Afterwards we recalculate our number of training epochs
+    args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
     def eval_epoch():
         model.eval()
         losses = []

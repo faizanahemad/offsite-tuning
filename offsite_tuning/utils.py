@@ -584,6 +584,15 @@ def get_args():
         default=64,
         help='Size of the adapter',
     )
+    parser.add_argument(
+        "--fsdp", action="store_true", help="Are we using FSDP training"
+    )
+    parser.add_argument(
+        "--gradient_checkpointing_enable",
+        action="store_true",
+        help="Enable gradient checkpointing. This may not work if your architecture freezes some parameters and you try to use deepspeed or fsdp.",
+    )
+    
 
     return parser
 
