@@ -811,7 +811,7 @@ def setup_teacher_student(model, args, accelerator):
 
     for param in model.teacher.parameters():
         param.requires_grad = False
-
+    
     add_prologue(model.student[0], None)
     add_epilogue(model.student[-1], None)
     model.student_l = model.student[0]
@@ -845,8 +845,6 @@ def to_teacher(model, args, accelerator):
 
 
 def to_student(model, args, accelerator):
-    # model.teacher.to("cpu")
-    # model.student.to(accelerator.device)
     l = args.student_l_pad
     backbone, _ = get_backbone(model)
     r = len(backbone) - args.student_r_pad

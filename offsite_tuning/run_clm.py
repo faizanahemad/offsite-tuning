@@ -175,7 +175,7 @@ def main():
         gradient_accumulation_steps=args.gradient_accumulation_steps, fsdp_plugin=fsdp_params, kwargs_handlers=[ddp_kwargs], **accelerator_log_kwargs)
 
     # Handle the repository creation
-    if accelerator.is_main_process:
+    if accelerator.is_local_main_process:
         if args.output_dir is not None:
             os.makedirs(args.output_dir, exist_ok=True)
     accelerator.wait_for_everyone()
@@ -276,9 +276,9 @@ def main():
 
     if args.use_bitfit:
         use_bitfit(model.trainable_module)
-        
+
     if args.gradient_checkpointing_enable:
-        assert (hasattr(accelerator.state, "deepspeed_plugin") and accelerator.state.deepspeed_plugin is None) or not hasattr(accelerator.state, "deepspeed_plugin")
+        # assert (hasattr(accelerator.state, "deepspeed_plugin") and accelerator.state.deepspeed_plugin is None) or not hasattr(accelerator.state, "deepspeed_plugin")
         # assert (hasattr(accelerator.state, "fsdp_plugin") and accelerator.state.fsdp_plugin is None) or not hasattr(accelerator.state, "fsdp_plugin")
         pre = model.transformer.get_input_embeddings().requires_grad_
         model.enable_input_require_grads()
@@ -287,19 +287,18 @@ def main():
         logger.info(f"Pre grad = {pre}, post grad = {post}")
         if pre!=post:
             raise ValueError
-        
-        
+
     if hasattr(accelerator.state, "fsdp_plugin") and accelerator.state.fsdp_plugin:
         logger.info(f"FSDP speed state = {accelerator.state.fsdp_plugin} and FSDP speed config = {str(accelerator.state.fsdp_plugin)}")
-    
+
     trainable_params = sum(p.numel()
                            for p in model.parameters() if p.requires_grad)
     total_params = sum(p.numel()
                            for p in model.parameters())
 
     logger.info(f"Number of trainable parameters: {trainable_params/(1024*1024)} Million, Total Parameter = {total_params/(1024*1024)}")
-    
-    
+
+
     train_dataloader, eval_dataloader = get_dataloaders(args, tokenizer, accelerator)
     if args.load_student and not args.restart_training:
         results_dir = args.load_student if os.path.isdir(args.load_student) else os.path.dirname(args.load_student)
@@ -508,7 +507,7 @@ def main():
                     accelerator.backward(loss)
             else:
                 with torch.autocast("cuda" if torch.cuda.is_available() else "cpu"):
-                        outputs = model(**batch)
+                    outputs = model(**batch)
                 # logger.error(f"Sync else step = {step}, total_non_accum_steps={total_non_accum_steps}")
                 lm_loss = outputs.loss
                 if not args.no_teacher:
@@ -574,7 +573,7 @@ def main():
                 )
                 is_best = perplexity < best_perplexity
                 best_perplexity = min(best_perplexity, perplexity)
-                if is_best and accelerator.is_main_process and (completed_steps > 0.1 * args.max_train_steps and (completed_steps > last_save_state + 100 or completed_steps >= args.max_train_steps-100)):
+                if is_best and accelerator.is_local_main_process and (completed_steps > 0.1 * args.max_train_steps and (completed_steps > last_save_state + 100 or completed_steps >= args.max_train_steps-100)):
                     with open(os.path.join(args.output_dir, "all_results.json"), "w+") as f:
                         json.dump({"best_perplexity": best_perplexity,
                                    "plug_perplexity": plug_ppl,
@@ -586,7 +585,7 @@ def main():
                                    "step": completed_steps,
                                    "trainable_params": trainable_params}, f)
 
-                if not args.no_save_model and is_best and accelerator.is_main_process and (completed_steps > 0.1 * args.max_train_steps and (completed_steps > last_save_state + 100 or completed_steps >= args.max_train_steps-100)):
+                if not args.no_save_model and is_best and accelerator.is_local_main_process and (completed_steps > 0.1 * args.max_train_steps and (completed_steps > last_save_state + 100 or completed_steps >= args.max_train_steps-100)):
                     last_save_state = completed_steps
                     unwrapped_model = accelerator.unwrap_model(model)
                     logger.info(f"Saving Model = {args.save_module} at {args.output_dir}")
@@ -605,7 +604,7 @@ def main():
                     torch.cuda.empty_cache()
             if completed_steps >= args.max_train_steps:
                 training_stop_flag = True
-                if accelerator.is_main_process and is_saved:
+                if is_saved:
                     logger.warn(f"Save at step {completed_steps} with params %s" % {k:"%.5f" % float(v.flatten()[0]) for k, v in state_dict.items()})
                 break
 
