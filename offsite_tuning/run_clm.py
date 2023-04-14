@@ -259,7 +259,7 @@ def main():
 
     if args.no_teacher:
         model.teacher = None
-        to_student(model, args)
+        to_student(model, args, accelerator)
         gc.collect()
         torch.cuda.empty_cache()
 
@@ -440,7 +440,7 @@ def main():
         return eval_loss, perplexity
 
     if not args.no_teacher:
-        to_teacher(model.module if hasattr(model, "module") else model, args)
+        to_teacher(model.module if hasattr(model, "module") else model, args, accelerator)
         model.eval()
         _, teacher_zero_shot_perplexity = eval_epoch()
         logger.info(
@@ -448,7 +448,7 @@ def main():
     else:
         teacher_zero_shot_perplexity = 0
 
-    to_student(model.module if hasattr(model, "module") else model, args)
+    to_student(model.module if hasattr(model, "module") else model, args, accelerator)
 
     # for name, param in model.named_parameters():
     #     logger.info(
@@ -542,11 +542,11 @@ def main():
                 logger.info(
                     f"epoch {epoch} dataloader step = {step} completed step {completed_steps}, accumulation steps = {accelerator.gradient_accumulation_steps}")
                 if not args.no_teacher:
-                    to_teacher(model.module if hasattr(model, "module") else model, args)
+                    to_teacher(model.module if hasattr(model, "module") else model, args, accelerator)
                     plug_eval_loss, plug_ppl = eval_epoch()
                 else:
                     plug_eval_loss, plug_ppl = 0, 0
-                to_student(model.module if hasattr(model, "module") else model, args)
+                to_student(model.module if hasattr(model, "module") else model, args, accelerator)
                 eval_loss, perplexity = eval_epoch()
                 model.train()
                 lm_loss = interval_lm_loss / args.eval_steps

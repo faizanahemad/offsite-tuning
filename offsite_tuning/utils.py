@@ -612,38 +612,29 @@ def parse_args():
     return args
     
 
-def get_layers(model):
+def get_backbone(model):
     if isinstance(model, OPTForCausalLM):
-        layers = model.model.decoder.layers
-    elif isinstance(model, GPT2LMHeadModel):
-        layers = model.transformer.h
-    elif isinstance(model, BloomForCausalLM):
-        layers = model.transformer.h
+        return model.model.decoder.layers, (model.model.decoder, "layers")
+    elif isinstance(model, (GPT2LMHeadModel, BloomForCausalLM)):
+        return model.transformer.h, (model.transformer, "h")
     elif isinstance(model, ViTForImageClassification):
-        layers = model.vit.encoder.layer
+        return model.vit.encoder.layer, (model.vit.encoder, "layer")
     elif isinstance(model, CLIPViTForImageClassification):
-        layers = model.vit.encoder.layers
+        return model.vit.encoder.layers, (model.vit.encoder, "layers")
     elif isinstance(model, EVAViTForImageClassification):
-        layers = model.blocks
+        return model.blocks, (model, "blocks")
     else:
         raise NotImplementedError
-    return layers
 
-def set_layers(model, layers):
-    if isinstance(model, OPTForCausalLM):
-        model.model.decoder.layers = layers
-    elif isinstance(model, GPT2LMHeadModel):
-        model.transformer.h = layers
-    elif isinstance(model, BloomForCausalLM):
-        model.transformer.h = layers
-    elif isinstance(model, ViTForImageClassification):
-        model.vit.encoder.layer = layers
-    elif isinstance(model, CLIPViTForImageClassification):
-        model.vit.encoder.layers = layers
-    elif isinstance(model, EVAViTForImageClassification):
-        model.blocks = layers
-    else:
-        raise NotImplementedError
+
+def set_backbone(model, backbone):
+    _, (set_on, name) = get_backbone(model)
+    setattr(set_on, name, backbone)
+
+
+def get_layers(model):
+    return get_backbone(model)[0]
+
 
 def add_small_student_adapters_to_student(student, model, args, load_student=False):
     if hasattr(model, "student") and args.student_model_name_or_path:
@@ -652,14 +643,14 @@ def add_small_student_adapters_to_student(student, model, args, load_student=Fal
         student_config = model.student.config
         first_adapter = LargeSmallModelPatch(model_config.hidden_size, student_config.hidden_size, student_config.activation_function, student_config.layer_norm_epsilon, student_config.initializer_range, internal_expansion_factor=4, dropout=student_config.resid_pdrop)
         last_adapter = LargeSmallModelPatch(student_config.hidden_size, model_config.hidden_size, student_config.activation_function, student_config.layer_norm_epsilon, student_config.initializer_range, internal_expansion_factor=4, dropout=model_config.resid_pdrop)
-        
+
         assert args.student_l_pad > 0
         first_layer = deepcopy(get_layers(model)[args.student_l_pad])
         first_layer.mlp = first_adapter
         last_layer = deepcopy(student[-1])
         last_layer.mlp = last_adapter
-        
-        
+
+
         def new_forward(self):
             def forward(
                 hidden_states,
@@ -845,64 +836,22 @@ def setup_teacher_student(model, args, accelerator):
     return model
 
 
-def to_teacher(model, args):
+def to_teacher(model, args, accelerator):
     l = args.student_l_pad
-    if isinstance(model, OPTForCausalLM):
-        r = len(model.model.decoder.layers) - args.student_r_pad
-        model.model.decoder.layers = model.model.decoder.layers[
-            :l] + model.teacher + model.model.decoder.layers[r:]
-    elif isinstance(model, GPT2LMHeadModel):
-        r = len(model.transformer.h) - args.student_r_pad
-        model.transformer.h = model.transformer.h[:l] + \
-            model.teacher + model.transformer.h[r:]
-    elif isinstance(model, BloomForCausalLM):
-        r = len(model.transformer.h) - args.student_r_pad
-        model.transformer.h = model.transformer.h[:l] + \
-            model.teacher + model.transformer.h[r:]
-    elif isinstance(model, ViTForImageClassification):
-        r = len(model.vit.encoder.layer) - args.student_r_pad
-        model.vit.encoder.layer = model.vit.encoder.layer[:l] + \
-            model.teacher + model.vit.encoder.layer[r:]
-    elif isinstance(model, CLIPViTForImageClassification):
-        r = len(model.vit.encoder.layers) - args.student_r_pad
-        model.vit.encoder.layers = model.vit.encoder.layers[:l] + \
-            model.teacher + model.vit.encoder.layers[r:]
-    elif isinstance(model, EVAViTForImageClassification):
-        r = len(model.blocks) - args.student_r_pad
-        model.blocks = model.blocks[:l] + \
-            model.teacher + model.blocks[r:]
-    else:
-        raise NotImplementedError
+    backbone, _ = get_backbone(model)
+    r = len(backbone) - args.student_r_pad
+    backbone = backbone[:l] + model.teacher + backbone[r:]
+    set_backbone(model, backbone)
 
 
-def to_student(model, args):
+def to_student(model, args, accelerator):
+    # model.teacher.to("cpu")
+    # model.student.to(accelerator.device)
     l = args.student_l_pad
-    if isinstance(model, OPTForCausalLM):
-        r = len(model.model.decoder.layers) - args.student_r_pad
-        model.model.decoder.layers = model.model.decoder.layers[
-            :l] + model.student + model.model.decoder.layers[r:]
-    elif isinstance(model, GPT2LMHeadModel):
-        r = len(model.transformer.h) - args.student_r_pad
-        model.transformer.h = model.transformer.h[:l] + \
-            model.student + model.transformer.h[r:]
-    elif isinstance(model, BloomForCausalLM):
-        r = len(model.transformer.h) - args.student_r_pad
-        model.transformer.h = model.transformer.h[:l] + \
-            model.student + model.transformer.h[r:]
-    elif isinstance(model, ViTForImageClassification):
-        r = len(model.vit.encoder.layer) - args.student_r_pad
-        model.vit.encoder.layer = model.vit.encoder.layer[:l] + \
-            model.student + model.vit.encoder.layer[r:]
-    elif isinstance(model, CLIPViTForImageClassification):
-        r = len(model.vit.encoder.layers) - args.student_r_pad
-        model.vit.encoder.layers = model.vit.encoder.layers[:l] + \
-            model.student + model.vit.encoder.layers[r:]
-    elif isinstance(model, EVAViTForImageClassification):
-        r = len(model.blocks) - args.student_r_pad
-        model.blocks = model.blocks[:l] + \
-            model.student + model.blocks[r:]
-    else:
-        raise NotImplementedError
+    backbone, _ = get_backbone(model)
+    r = len(backbone) - args.student_r_pad
+    backbone = backbone[:l] + model.student + backbone[r:]
+    set_backbone(model, backbone)
 
 
 def get_kd_loss(model):
