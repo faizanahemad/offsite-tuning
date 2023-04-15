@@ -466,13 +466,14 @@ def main():
 
     completed_steps = 0
     last_save_state = -1
-    training_stop_flag = False
     is_saved = False
     # update the progress_bar if load from checkpoint
     progress_bar.update(starting_epoch * num_update_steps_per_epoch)
     completed_steps = starting_epoch * num_update_steps_per_epoch
     gradient_accumulation_steps = accelerator.gradient_accumulation_steps
     total_non_accum_steps = 0
+    gc.collect()
+    torch.cuda.empty_cache()
     for epoch in range(starting_epoch, args.num_train_epochs):
         model.train()
         total_lm_loss, total_kd_loss = 0, 0
@@ -480,6 +481,8 @@ def main():
         best_lm_loss, best_kd_loss = float("inf"), float("inf")
         skipped_steps = 0
         for step, batch in enumerate(train_dataloader):
+            if completed_steps >= args.max_train_steps:
+                break
             total_non_accum_steps += 1
             # We need to skip steps until we reach the resumed step
             if args.load_student and epoch == starting_epoch and step <= resume_step:
@@ -573,7 +576,7 @@ def main():
                 )
                 is_best = perplexity < best_perplexity
                 best_perplexity = min(best_perplexity, perplexity)
-                if is_best and accelerator.is_local_main_process and (completed_steps > 0.1 * args.max_train_steps and (completed_steps > last_save_state + 100 or completed_steps >= args.max_train_steps-100)):
+                if is_best and accelerator.is_local_main_process:
                     with open(os.path.join(args.output_dir, "all_results.json"), "w+") as f:
                         json.dump({"best_perplexity": best_perplexity,
                                    "plug_perplexity": plug_ppl,
@@ -585,7 +588,7 @@ def main():
                                    "step": completed_steps,
                                    "trainable_params": trainable_params}, f)
 
-                if not args.no_save_model and is_best and accelerator.is_local_main_process and (completed_steps > 0.1 * args.max_train_steps and (completed_steps > last_save_state + 100 or completed_steps >= args.max_train_steps-100)):
+                if not args.no_save_model and is_best and accelerator.is_local_main_process:
                     last_save_state = completed_steps
                     unwrapped_model = accelerator.unwrap_model(model)
                     logger.info(f"Saving Model = {args.save_module} at {args.output_dir}")
@@ -599,17 +602,6 @@ def main():
                         state_dict = unwrapped_model.adapter.state_dict()
                         save_state_dict(
                             state_dict, args.output_dir, "adapter.pt")
-
-                    gc.collect()
-                    torch.cuda.empty_cache()
-            if completed_steps >= args.max_train_steps:
-                training_stop_flag = True
-                if is_saved:
-                    logger.warn(f"Save at step {completed_steps} with params %s" % {k:"%.5f" % float(v.flatten()[0]) for k, v in state_dict.items()})
-                break
-
-        if training_stop_flag:
-            break
 
     accelerator.end_training()
 
