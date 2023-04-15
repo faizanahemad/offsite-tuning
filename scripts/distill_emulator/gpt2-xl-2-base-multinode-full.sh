@@ -12,7 +12,7 @@ export WANDB_DISABLE_SERVICE=true
 rm emulators/${MODEL}/${num_student_layers}_${pad}_${pad}/all_results.json
 
 CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" accelerate launch \
-    --mixed_precision=bf16 --num_machines 8 --machine_rank 0 --main_process_ip "0.0.0.0" --main_process_port 9999 --max_restarts 3 --multi_gpu\
+    --mixed_precision=bf16 --num_machines $1 --machine_rank $2 --main_process_ip $3 --main_process_port 9999 --max_restarts 3 --multi_gpu\
     offsite_tuning/run_clm.py \
     --model_name_or_path $MODEL \
     --train_tokenized_dataset $HOME/processed_datasets/pile_subsampled_tokenized_blocks \
