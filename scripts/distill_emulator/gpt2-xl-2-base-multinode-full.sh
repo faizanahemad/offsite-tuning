@@ -1,4 +1,7 @@
 # l25
+export NCCL_SOCKET_IFNAME="eth,enp6s0"
+export NCCL_DEBUG=WARN
+export NCCL_IB_GID_INDEX=3
 MODEL="gpt2-xl"
 student_model_name_or_path="gpt2"
 num_student_layers=8
