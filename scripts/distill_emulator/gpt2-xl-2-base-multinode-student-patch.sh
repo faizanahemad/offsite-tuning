@@ -1,5 +1,5 @@
 # l25
-export NCCL_SOCKET_IFNAME="eth,enp6s0"
+export NCCL_SOCKET_IFNAME="ib0,bond0,eth0"
 export NCCL_DEBUG=INFO
 export NCCL_IB_GID_INDEX=3
 MODEL="gpt2-xl"
