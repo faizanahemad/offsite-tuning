@@ -145,10 +145,10 @@ def get_dataloaders(args, tokenizer, accelerator):
 
     collator = default_data_collator
     train_dataloader = DataLoader(
-        train_dataset, shuffle=True, collate_fn=collator, batch_size=args.per_device_train_batch_size
+        train_dataset, shuffle=True, num_workers=4, collate_fn=collator, batch_size=args.per_device_train_batch_size
     )
     eval_dataloader = DataLoader(
-        eval_dataset, collate_fn=collator, batch_size=args.per_device_eval_batch_size
+        eval_dataset, collate_fn=collator, num_workers=4, batch_size=args.per_device_eval_batch_size
     )
     
     logger.info(f"  Num examples = {len(train_dataset)}")
@@ -341,7 +341,7 @@ def main():
     opt_cond = accelerator.state.deepspeed_plugin is None \
     or "optimizer" not in accelerator.state.deepspeed_plugin.deepspeed_config \
     or accelerator.state.deepspeed_plugin.deepspeed_config["zero_stage"] != 3
-    
+
     optimizer_cls = (
         torch.optim.AdamW
         if opt_cond
